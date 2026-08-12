@@ -342,7 +342,7 @@ h6 {
 
 /* ─── Form elements ─── */
 
-/* Input — dark bg with zinc border */
+/* Input — standalone (no icon) */
 .input-field {
   font-family: var(--font-body);
   font-size: 14px;
@@ -366,6 +366,39 @@ h6 {
 }
 .input-field:invalid:not(:placeholder-shown) {
   border-color: var(--color-status-cancelled);
+}
+
+/* Input wrapper — flex row with icon + input (no overlap) */
+.input-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background-color: var(--color-primary);
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+.input-wrapper:focus-within {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-subtle);
+}
+
+/* Inner input — unstyled, fills remaining space */
+.input-inner {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-body);
+  font-size: 14px;
+  color: var(--color-text);
+  background: transparent;
+  border: none;
+  outline: none;
+}
+.input-inner::placeholder {
+  color: var(--color-text-subtle);
 }
 
 /* Label */

@@ -23,15 +23,15 @@ export default function CustomerForm({ values, onChange, errors }: Props) {
           <label htmlFor="customerName" className="input-label">
             ชื่อ-นามสกุล
           </label>
-          <div className="relative">
-            <User className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
+          <div className="input-wrapper">
+            <User className="h-4 w-4 shrink-0 text-text-muted" />
             <input
               id="customerName"
               type="text"
               placeholder="สมชาย ใจดี"
               value={values.customerName}
               onChange={(e) => onChange("customerName", e.target.value)}
-              className="input-field pl-10"
+              className="input-inner"
             />
           </div>
           {errors.customerName && (
@@ -44,15 +44,15 @@ export default function CustomerForm({ values, onChange, errors }: Props) {
           <label htmlFor="customerPhone" className="input-label">
             เบอร์โทรศัพท์
           </label>
-          <div className="relative">
-            <Phone className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
+          <div className="input-wrapper">
+            <Phone className="h-4 w-4 shrink-0 text-text-muted" />
             <input
               id="customerPhone"
               type="tel"
               placeholder="0812345678"
               value={values.customerPhone}
               onChange={(e) => onChange("customerPhone", e.target.value)}
-              className="input-field pl-10"
+              className="input-inner"
             />
           </div>
           {errors.customerPhone && (
@@ -65,15 +65,15 @@ export default function CustomerForm({ values, onChange, errors }: Props) {
           <label htmlFor="licensePlate" className="input-label">
             ทะเบียนรถ
           </label>
-          <div className="relative">
-            <Car className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
+          <div className="input-wrapper">
+            <Car className="h-4 w-4 shrink-0 text-text-muted" />
             <input
               id="licensePlate"
               type="text"
               placeholder="กว 1234"
               value={values.licensePlate}
               onChange={(e) => onChange("licensePlate", e.target.value)}
-              className="input-field pl-10"
+              className="input-inner"
             />
           </div>
           {errors.licensePlate && (
@@ -84,18 +84,17 @@ export default function CustomerForm({ values, onChange, errors }: Props) {
         {/* Notes */}
         <div>
           <label htmlFor="notes" className="input-label">
-            หมายเหตุ{" "}
-            <span className="text-text-subtle">(ไม่บังคับ)</span>
+            หมายเหตุ <span className="text-text-subtle">(ไม่บังคับ)</span>
           </label>
-          <div className="relative">
-            <FileText className="absolute left-3 top-3 h-4 w-4 text-text-muted" />
+          <div className="input-wrapper items-start">
+            <FileText className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
             <textarea
               id="notes"
               placeholder="แจ้งอาการเพิ่มเติม..."
               value={values.notes}
               onChange={(e) => onChange("notes", e.target.value)}
               rows={3}
-              className="input-field resize-none pl-10"
+              className="input-inner resize-none"
             />
           </div>
         </div>
