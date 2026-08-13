@@ -28,7 +28,7 @@ export default function CustomerForm({ values, onChange, errors }: Props) {
             <input
               id="customerName"
               type="text"
-              placeholder="สมชาย ใจดี"
+              placeholder="ชื่อ-นามสกุล"
               value={values.customerName}
               onChange={(e) => onChange("customerName", e.target.value)}
               className="input-inner"
