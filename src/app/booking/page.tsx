@@ -47,6 +47,7 @@ export default function BookingPage() {
     licensePlate: "",
     notes: "",
   });
+  const [honeypot, setHoneypot] = useState("");
 
   // UI state
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -67,9 +68,7 @@ export default function BookingPage() {
         setServices(servicesData);
         setClosedDays(configData.closedDays || []);
         setClosedDates(
-          (configData.closedDates || []).map(
-            (d: { date: string }) => d.date
-          )
+          (configData.closedDates || []).map((d: { date: string }) => d.date),
         );
       } catch {
         setSubmitError("ไม่สามารถโหลดข้อมูลได้ กรุณารีเฟรชหน้า");
@@ -171,6 +170,7 @@ export default function BookingPage() {
           date: selectedDate,
           timeBlockId: selectedTimeBlock,
           ...customerFields,
+          _website: honeypot, // honeypot — bots fill this, humans don't see it
         }),
       });
 
@@ -179,11 +179,9 @@ export default function BookingPage() {
       if (!res.ok) {
         if (data.errors) {
           const fieldErrors: Record<string, string> = {};
-          data.errors.forEach(
-            (e: { field: string; message: string }) => {
-              fieldErrors[e.field] = e.message;
-            }
-          );
+          data.errors.forEach((e: { field: string; message: string }) => {
+            fieldErrors[e.field] = e.message;
+          });
           setErrors(fieldErrors);
         } else {
           setSubmitError(data.error || "เกิดข้อผิดพลาด กรุณาลองใหม่");
@@ -312,6 +310,23 @@ export default function BookingPage() {
             </section>
 
             <div className="hr-gradient" />
+
+            {/* Honeypot — hidden from humans, bots fill it */}
+            <div
+              className="absolute -left-[9999px] opacity-0"
+              aria-hidden="true"
+            >
+              <label htmlFor="_website">Website</label>
+              <input
+                id="_website"
+                type="text"
+                name="_website"
+                value={honeypot}
+                onChange={(e) => setHoneypot(e.target.value)}
+                tabIndex={-1}
+                autoComplete="off"
+              />
+            </div>
 
             {/* Submit */}
             {submitError && (
