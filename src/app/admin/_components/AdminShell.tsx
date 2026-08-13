@@ -13,6 +13,7 @@ import {
   Menu,
   X,
   ChevronRight,
+  UserCircle,
 } from "lucide-react";
 
 const NAV_ITEMS = [
@@ -116,29 +117,41 @@ export default function AdminShell({
                 >
                   <item.icon className="h-4 w-4" />
                   {item.label}
-                  {isActive && (
-                    <ChevronRight className="ml-auto h-3.5 w-3.5" />
-                  )}
+                  {isActive && <ChevronRight className="ml-auto h-3.5 w-3.5" />}
                 </Link>
               );
             })}
           </div>
         </nav>
 
-        {/* User + sign out */}
+        {/* User + profile + sign out */}
         <div className="border-t border-border-light p-4">
           <div className="mb-3 text-xs text-text-muted">
             เข้าสู่ระบบเป็น{" "}
             <span className="text-text-heading">{userName}</span>
           </div>
-          <button
-            type="button"
-            onClick={handleSignOut}
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-text-muted transition-colors hover:bg-primary-light hover:text-status-cancelled"
-          >
-            <LogOut className="h-4 w-4" />
-            ออกจากระบบ
-          </button>
+          <div className="space-y-1">
+            <Link
+              href="/admin/profile"
+              onClick={() => setSidebarOpen(false)}
+              className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors ${
+                pathname === "/admin/profile"
+                  ? "bg-accent-subtle text-accent"
+                  : "text-text-muted hover:bg-primary-light hover:text-text-heading"
+              }`}
+            >
+              <UserCircle className="h-4 w-4" />
+              โปรไฟล์
+            </Link>
+            <button
+              type="button"
+              onClick={handleSignOut}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-text-muted transition-colors hover:bg-primary-light hover:text-status-cancelled"
+            >
+              <LogOut className="h-4 w-4" />
+              ออกจากระบบ
+            </button>
+          </div>
         </div>
       </aside>
 
