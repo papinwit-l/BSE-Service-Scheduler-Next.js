@@ -17,6 +17,7 @@ import {
   MessageCircle,
   CheckCircle,
   Send,
+  Bell,
 } from "lucide-react";
 import { format } from "date-fns";
 import { th } from "date-fns/locale";
@@ -86,6 +87,8 @@ export default function AdminBookingDetailPage() {
   const [error, setError] = useState("");
   const [updating, setUpdating] = useState("");
   const [notification, setNotification] = useState("");
+  const [sendNotify, setSendNotify] = useState(true);
+  const [sending, setSending] = useState(false);
 
   useEffect(() => {
     fetch(`/api/admin/bookings/${id}`)
@@ -116,7 +119,7 @@ export default function AdminBookingDetailPage() {
       const res = await fetch(`/api/admin/bookings/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: newStatus }),
+        body: JSON.stringify({ status: newStatus, sendNotify }),
       });
 
       const data = await res.json();
@@ -128,7 +131,9 @@ export default function AdminBookingDetailPage() {
 
       setBooking({ ...booking, status: data.status });
 
-      if (data.lineNotified) {
+      if (!sendNotify) {
+        setNotification("✅ อัปเดตสถานะสำเร็จ — ไม่ส่งแจ้งเตือน");
+      } else if (data.lineNotified) {
         setNotification("✅ อัปเดตสถานะสำเร็จ — แจ้งเตือน LINE แล้ว");
       } else if (booking.lineUserId) {
         setNotification("⚠️ อัปเดตสถานะสำเร็จ — แจ้งเตือน LINE ไม่สำเร็จ");
@@ -139,6 +144,29 @@ export default function AdminBookingDetailPage() {
       setNotification("❌ ไม่สามารถอัปเดตสถานะได้");
     } finally {
       setUpdating("");
+    }
+  }
+
+  async function handleSendNotify() {
+    if (!booking) return;
+    setSending(true);
+    setNotification("");
+
+    try {
+      const res = await fetch(`/api/admin/bookings/${id}/notify`, {
+        method: "POST",
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        setNotification(`❌ ${data.error}`);
+      } else {
+        setNotification("✅ ส่งแจ้งเตือน LINE สำเร็จ");
+      }
+    } catch {
+      setNotification("❌ ไม่สามารถส่งแจ้งเตือนได้");
+    } finally {
+      setSending(false);
     }
   }
 
@@ -189,27 +217,41 @@ export default function AdminBookingDetailPage() {
 
         {/* Status actions */}
         {actions.length > 0 && (
-          <div className="flex gap-2">
-            {actions.map((action) => (
-              <button
-                key={action.to}
-                type="button"
-                onClick={() => handleStatusUpdate(action.to)}
-                disabled={!!updating}
-                className={
-                  action.variant === "btn-cancel"
-                    ? "flex items-center gap-2 rounded-lg border border-status-cancelled/30 bg-status-cancelled/5 px-4 py-2 text-sm font-medium text-status-cancelled transition-all hover:bg-status-cancelled/10 disabled:opacity-50"
-                    : "btn-primary disabled:opacity-50"
-                }
-              >
-                {updating === action.to ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : action.variant === "btn-cancel" ? null : (
-                  <Send className="h-4 w-4" />
-                )}
-                {action.label}
-              </button>
-            ))}
+          <div className="flex flex-col items-end gap-2">
+            <div className="flex gap-2">
+              {actions.map((action) => (
+                <button
+                  key={action.to}
+                  type="button"
+                  onClick={() => handleStatusUpdate(action.to)}
+                  disabled={!!updating}
+                  className={
+                    action.variant === "btn-cancel"
+                      ? "flex items-center gap-2 rounded-lg border border-status-cancelled/30 bg-status-cancelled/5 px-4 py-2 text-sm font-medium text-status-cancelled transition-all hover:bg-status-cancelled/10 disabled:opacity-50"
+                      : "btn-primary disabled:opacity-50"
+                  }
+                >
+                  {updating === action.to ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : action.variant === "btn-cancel" ? null : (
+                    <Send className="h-4 w-4" />
+                  )}
+                  {action.label}
+                </button>
+              ))}
+            </div>
+            <label className="flex cursor-pointer items-center gap-2 text-xs text-text-muted">
+              <input
+                type="checkbox"
+                checked={sendNotify}
+                onChange={(e) => setSendNotify(e.target.checked)}
+                className="sr-only"
+              />
+              <span className={`flex h-5 w-9 items-center rounded-full transition-colors ${sendNotify ? "bg-accent" : "bg-border"}`}>
+                <span className={`h-3.5 w-3.5 rounded-full bg-white transition-transform ${sendNotify ? "translate-x-4.5" : "translate-x-0.5"}`} />
+              </span>
+              แจ้งเตือน LINE
+            </label>
           </div>
         )}
       </div>
@@ -238,12 +280,30 @@ export default function AdminBookingDetailPage() {
           <DetailRow icon={User} label="ชื่อ" value={booking.customerName} />
           <DetailRow icon={Phone} label="เบอร์โทร" value={booking.customerPhone} />
           <DetailRow icon={Car} label="ทะเบียนรถ" value={booking.licensePlate} mono />
-          <DetailRow
-            icon={MessageCircle}
-            label="LINE"
-            value={booking.lineUserId ? "เชื่อมต่อแล้ว" : "ยังไม่ได้เชื่อมต่อ"}
-            muted={!booking.lineUserId}
-          />
+          <div className="flex items-start gap-3">
+            <MessageCircle className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
+            <div className="flex-1">
+              <div className="text-[11px] text-text-muted">LINE</div>
+              <div className={`text-sm ${booking.lineUserId ? "text-text-heading" : "text-text-subtle"}`}>
+                {booking.lineUserId ? "เชื่อมต่อแล้ว" : "ยังไม่ได้เชื่อมต่อ"}
+              </div>
+            </div>
+            {booking.lineUserId && (
+              <button
+                type="button"
+                onClick={handleSendNotify}
+                disabled={sending}
+                className="btn-tertiary text-xs"
+              >
+                {sending ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Bell className="h-3.5 w-3.5" />
+                )}
+                ส่งแจ้งเตือน
+              </button>
+            )}
+          </div>
         </div>
       </div>
 

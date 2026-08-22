@@ -5,7 +5,7 @@ import { sendStatusUpdate } from "@/lib/line";
 
 export async function GET(
   _request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const session = await auth();
   if (!session) {
@@ -28,10 +28,7 @@ export async function GET(
     });
 
     if (!booking) {
-      return NextResponse.json(
-        { error: "ไม่พบรายการจอง" },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "ไม่พบรายการจอง" }, { status: 404 });
     }
 
     return NextResponse.json({
@@ -58,14 +55,14 @@ export async function GET(
   } catch {
     return NextResponse.json(
       { error: "ไม่สามารถโหลดข้อมูลได้" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const session = await auth();
   if (!session) {
@@ -75,32 +72,33 @@ export async function PATCH(
   try {
     const { id } = await params;
     const body = await request.json();
-    const { status } = body;
+    const { status, sendNotify = true } = body;
 
     const validStatuses = ["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED"];
     if (!validStatuses.includes(status)) {
-      return NextResponse.json(
-        { error: "สถานะไม่ถูกต้อง" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "สถานะไม่ถูกต้อง" }, { status: 400 });
     }
 
     const booking = await prisma.booking.update({
       where: { id },
       data: { status },
       include: {
+        timeBlock: true,
         bookingServices: {
           include: { service: true },
         },
       },
     });
 
-    // Send LINE notification if user has linked LINE
+    // Send LINE notification if enabled and user has linked LINE
     let lineNotified = false;
-    if (booking.lineUserId) {
+    if (sendNotify && booking.lineUserId) {
       lineNotified = await sendStatusUpdate(booking.lineUserId, {
         bookingCode: booking.bookingCode,
         status: booking.status,
+        customerName: booking.customerName,
+        date: booking.date.toISOString().split("T")[0],
+        timeBlock: `${booking.timeBlock.label} (${booking.timeBlock.startTime}–${booking.timeBlock.endTime})`,
         services: booking.bookingServices.map((bs) => bs.service.name),
       });
     }
@@ -112,7 +110,7 @@ export async function PATCH(
   } catch {
     return NextResponse.json(
       { error: "ไม่สามารถอัปเดตสถานะได้" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

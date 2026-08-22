@@ -111,3 +111,14 @@ enum BookingStatus {
   COMPLETED
   CANCELLED
 }
+
+// ─── NotificationTemplate ───
+// Editable LINE notification messages per status
+model NotificationTemplate {
+  id       String  @id @default(cuid()) @db.VarChar(30)
+  trigger  String  @unique @db.VarChar(20) // CONFIRMED, COMPLETED, CANCELLED
+  template String  @db.Text // message with {placeholders}
+  active   Boolean @default(true)
+
+  @@map("notification_templates")
+}

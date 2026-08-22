@@ -13,6 +13,11 @@ import {
   ToggleRight,
   ChevronLeft,
   ChevronRight,
+  Lock,
+  Eye,
+  EyeOff,
+  MessageSquare,
+  Save,
 } from "lucide-react";
 import {
   format,
@@ -48,6 +53,12 @@ type TimeBlock = {
 };
 type DayConfig = { id: string; dayOfWeek: number; isClosed: boolean };
 type ClosedDate = { id: string; date: string; reason: string | null };
+type NotificationTemplate = {
+  id: string;
+  trigger: string;
+  template: string;
+  active: boolean;
+};
 
 const DAY_LABELS = [
   "อาทิตย์",
@@ -63,6 +74,7 @@ const TABS = [
   { key: "timeblocks", label: "ช่วงเวลา", icon: Clock },
   { key: "schedule", label: "วันทำการ", icon: Calendar },
   { key: "holidays", label: "วันหยุดพิเศษ", icon: CalendarOff },
+  { key: "notifications", label: "แจ้งเตือน LINE", icon: MessageSquare },
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
@@ -74,6 +86,7 @@ export default function AdminSettingsPage() {
   const [timeBlocks, setTimeBlocks] = useState<TimeBlock[]>([]);
   const [dayConfigs, setDayConfigs] = useState<DayConfig[]>([]);
   const [closedDates, setClosedDates] = useState<ClosedDate[]>([]);
+  const [templates, setTemplates] = useState<NotificationTemplate[]>([]);
   const [msg, setMsg] = useState("");
 
   useEffect(() => {
@@ -82,12 +95,14 @@ export default function AdminSettingsPage() {
       fetch("/api/admin/time-blocks").then((r) => r.json()),
       fetch("/api/admin/day-configs").then((r) => r.json()),
       fetch("/api/admin/closed-dates").then((r) => r.json()),
+      fetch("/api/admin/notification-templates").then((r) => r.json()),
     ])
-      .then(([s, t, d, c]) => {
+      .then(([s, t, d, c, n]) => {
         setServices(Array.isArray(s) ? s : []);
         setTimeBlocks(Array.isArray(t) ? t : []);
         setDayConfigs(Array.isArray(d) ? d : []);
         setClosedDates(Array.isArray(c) ? c : []);
+        setTemplates(Array.isArray(n) ? n : []);
       })
       .finally(() => setLoading(false));
   }, []);
@@ -170,6 +185,13 @@ export default function AdminSettingsPage() {
           flash={flash}
         />
       )}
+      {tab === "notifications" && (
+        <NotificationsTab
+          templates={templates}
+          setTemplates={setTemplates}
+          flash={flash}
+        />
+      )}
     </div>
   );
 }
@@ -187,6 +209,7 @@ function ServicesTab({
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
   const [adding, setAdding] = useState(false);
+  const [processing, setProcessing] = useState("");
 
   async function handleAdd() {
     if (!name.trim()) return;
@@ -215,6 +238,7 @@ function ServicesTab({
   }
 
   async function toggleActive(service: Service) {
+    setProcessing(service.id);
     try {
       const res = await fetch("/api/admin/services", {
         method: "PATCH",
@@ -228,11 +252,15 @@ function ServicesTab({
           ),
         );
       }
-    } catch {}
+    } catch {
+    } finally {
+      setProcessing("");
+    }
   }
 
   async function handleDelete(service: Service) {
     if (!confirm(`ลบ "${service.name}"?`)) return;
+    setProcessing(service.id);
     try {
       const res = await fetch("/api/admin/services", {
         method: "DELETE",
@@ -248,6 +276,8 @@ function ServicesTab({
       flash("✅ ลบบริการสำเร็จ");
     } catch {
       flash("❌ เกิดข้อผิดพลาด");
+    } finally {
+      setProcessing("");
     }
   }
 
@@ -292,42 +322,52 @@ function ServicesTab({
 
       {/* List */}
       <div className="space-y-2">
-        {services.map((service) => (
-          <div
-            key={service.id}
-            className={`flex items-center gap-3 rounded-lg border border-border-light bg-primary-mid p-4 ${!service.active ? "opacity-50" : ""}`}
-          >
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium text-text-heading">
-                {service.name}
-              </div>
-              {service.description && (
-                <div className="text-xs text-text-muted mt-0.5">
-                  {service.description}
+        {services.map((service) => {
+          const isProcessing = processing === service.id;
+          return (
+            <div
+              key={service.id}
+              className={`relative flex items-center gap-3 rounded-lg border border-border-light bg-primary-mid p-4 ${!service.active ? "opacity-50" : ""}`}
+            >
+              {isProcessing && (
+                <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-primary-mid/90">
+                  <Loader2 className="h-5 w-5 animate-spin text-accent" />
                 </div>
               )}
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium text-text-heading">
+                  {service.name}
+                </div>
+                {service.description && (
+                  <div className="text-xs text-text-muted mt-0.5">
+                    {service.description}
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => toggleActive(service)}
+                disabled={isProcessing}
+                className="text-text-muted hover:text-accent"
+                title={service.active ? "ปิดการใช้งาน" : "เปิดการใช้งาน"}
+              >
+                {service.active ? (
+                  <ToggleRight className="h-5 w-5 text-accent" />
+                ) : (
+                  <ToggleLeft className="h-5 w-5" />
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDelete(service)}
+                disabled={isProcessing}
+                className="text-text-muted hover:text-status-cancelled"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => toggleActive(service)}
-              className="text-text-muted hover:text-accent"
-              title={service.active ? "ปิดการใช้งาน" : "เปิดการใช้งาน"}
-            >
-              {service.active ? (
-                <ToggleRight className="h-5 w-5 text-accent" />
-              ) : (
-                <ToggleLeft className="h-5 w-5" />
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={() => handleDelete(service)}
-              className="text-text-muted hover:text-status-cancelled"
-            >
-              <Trash2 className="h-4 w-4" />
-            </button>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -850,6 +890,374 @@ function HolidaysTab({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Change Password Section ───
+function ChangePasswordSection({ flash }: { flash: (m: string) => void }) {
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showCurrent, setShowCurrent] = useState(false);
+  const [showNew, setShowNew] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  async function handleSubmit() {
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      flash("❌ กรุณากรอกข้อมูลให้ครบ");
+      return;
+    }
+    if (newPassword.length < 8) {
+      flash("❌ รหัสผ่านใหม่ต้องมีอย่างน้อย 8 ตัวอักษร");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      flash("❌ รหัสผ่านใหม่ไม่ตรงกัน");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const res = await fetch("/api/admin/change-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ currentPassword, newPassword }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        flash(`❌ ${data.error}`);
+        return;
+      }
+
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      flash("✅ เปลี่ยนรหัสผ่านสำเร็จ");
+    } catch {
+      flash("❌ เกิดข้อผิดพลาด");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="rounded-lg border border-border-light bg-primary-mid p-5">
+      <h2 className="mb-4 flex items-center gap-2 text-xs font-medium text-text-muted uppercase tracking-wider">
+        <Lock className="h-3.5 w-3.5" />
+        เปลี่ยนรหัสผ่าน
+      </h2>
+
+      <div className="max-w-sm space-y-3">
+        <div>
+          <label className="input-label">รหัสผ่านปัจจุบัน</label>
+          <div className="input-wrapper">
+            <Lock className="h-4 w-4 shrink-0 text-text-muted" />
+            <input
+              type={showCurrent ? "text" : "password"}
+              placeholder="••••••••"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              className="input-inner"
+              autoComplete="current-password"
+            />
+            <button
+              type="button"
+              onClick={() => setShowCurrent(!showCurrent)}
+              className="shrink-0 text-text-muted hover:text-text-heading"
+              tabIndex={-1}
+            >
+              {showCurrent ? (
+                <EyeOff className="h-4 w-4" />
+              ) : (
+                <Eye className="h-4 w-4" />
+              )}
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <label className="input-label">รหัสผ่านใหม่</label>
+          <div className="input-wrapper">
+            <Lock className="h-4 w-4 shrink-0 text-text-muted" />
+            <input
+              type={showNew ? "text" : "password"}
+              placeholder="อย่างน้อย 8 ตัวอักษร"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              className="input-inner"
+              autoComplete="new-password"
+            />
+            <button
+              type="button"
+              onClick={() => setShowNew(!showNew)}
+              className="shrink-0 text-text-muted hover:text-text-heading"
+              tabIndex={-1}
+            >
+              {showNew ? (
+                <EyeOff className="h-4 w-4" />
+              ) : (
+                <Eye className="h-4 w-4" />
+              )}
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <label className="input-label">ยืนยันรหัสผ่านใหม่</label>
+          <div className="input-wrapper">
+            <Lock className="h-4 w-4 shrink-0 text-text-muted" />
+            <input
+              type="password"
+              placeholder="••••••••"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              className="input-inner"
+              autoComplete="new-password"
+            />
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={handleSubmit}
+          disabled={saving}
+          className="btn-primary text-sm disabled:opacity-50"
+        >
+          {saving ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Lock className="h-4 w-4" />
+          )}
+          เปลี่ยนรหัสผ่าน
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Notifications Tab ───
+const TRIGGER_LABELS: Record<string, string> = {
+  CONFIRMED: "ยืนยันการจอง",
+  COMPLETED: "บริการเสร็จสิ้น",
+  CANCELLED: "ยกเลิกการจอง",
+};
+
+const PLACEHOLDERS = [
+  { key: "{bookingCode}", label: "รหัสจอง" },
+  { key: "{customerName}", label: "ชื่อลูกค้า" },
+  { key: "{date}", label: "วันนัด" },
+  { key: "{timeBlock}", label: "ช่วงเวลา" },
+  { key: "{services}", label: "รายการบริการ" },
+];
+
+const SAMPLE_DATA: Record<string, string> = {
+  "{bookingCode}": "BK-7X2M9P",
+  "{customerName}": "สมชาย ใจดี",
+  "{date}": "2026-09-15",
+  "{timeBlock}": "เช้า (09:00–12:00)",
+  "{services}": "  • เช็คระยะ\n  • เปลี่ยนถ่ายน้ำมันเครื่อง",
+};
+
+function NotificationsTab({
+  templates,
+  setTemplates,
+  flash,
+}: {
+  templates: NotificationTemplate[];
+  setTemplates: (t: NotificationTemplate[]) => void;
+  flash: (m: string) => void;
+}) {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [previewId, setPreviewId] = useState<string | null>(null);
+  const textareaRef = useState<HTMLTextAreaElement | null>(null);
+
+  function startEdit(tmpl: NotificationTemplate) {
+    setEditingId(tmpl.id);
+    setEditValue(tmpl.template);
+    setPreviewId(null);
+  }
+
+  function insertPlaceholder(placeholder: string) {
+    setEditValue((prev) => prev + placeholder);
+  }
+
+  function getPreview(template: string): string {
+    let result = template;
+    for (const [key, value] of Object.entries(SAMPLE_DATA)) {
+      result = result.replace(
+        new RegExp(key.replace(/[{}]/g, "\\$&"), "g"),
+        value,
+      );
+    }
+    return result;
+  }
+
+  async function handleSave(id: string) {
+    setSaving(true);
+    try {
+      const res = await fetch("/api/admin/notification-templates", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, template: editValue }),
+      });
+      if (!res.ok) {
+        flash("❌ บันทึกไม่สำเร็จ");
+        return;
+      }
+      setTemplates(
+        templates.map((t) => (t.id === id ? { ...t, template: editValue } : t)),
+      );
+      setEditingId(null);
+      flash("✅ บันทึกข้อความสำเร็จ");
+    } catch {
+      flash("❌ เกิดข้อผิดพลาด");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function toggleActive(tmpl: NotificationTemplate) {
+    try {
+      const res = await fetch("/api/admin/notification-templates", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: tmpl.id, active: !tmpl.active }),
+      });
+      if (res.ok) {
+        setTemplates(
+          templates.map((t) =>
+            t.id === tmpl.id ? { ...t, active: !t.active } : t,
+          ),
+        );
+        flash(
+          `✅ ${!tmpl.active ? "เปิด" : "ปิด"}การแจ้งเตือน ${TRIGGER_LABELS[tmpl.trigger]}`,
+        );
+      }
+    } catch {}
+  }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-text-muted">
+        แก้ไขข้อความแจ้งเตือน LINE ที่ส่งเมื่อสถานะเปลี่ยน
+      </p>
+
+      {templates.map((tmpl) => {
+        const isEditing = editingId === tmpl.id;
+        const isPreviewing = previewId === tmpl.id;
+
+        return (
+          <div
+            key={tmpl.id}
+            className={`rounded-lg border border-border-light bg-primary-mid p-5 ${!tmpl.active ? "opacity-50" : ""}`}
+          >
+            {/* Header */}
+            <div className="mb-3 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <MessageSquare className="h-4 w-4 text-accent" />
+                <span className="text-sm font-medium text-text-heading">
+                  {TRIGGER_LABELS[tmpl.trigger] || tmpl.trigger}
+                </span>
+              </div>
+              <button type="button" onClick={() => toggleActive(tmpl)}>
+                {tmpl.active ? (
+                  <ToggleRight className="h-5 w-5 text-accent" />
+                ) : (
+                  <ToggleLeft className="h-5 w-5 text-text-muted" />
+                )}
+              </button>
+            </div>
+
+            {isEditing ? (
+              <div className="space-y-3">
+                {/* Placeholder buttons */}
+                <div>
+                  <div className="mb-1.5 text-[10px] text-text-muted">
+                    คลิกเพื่อแทรกข้อมูล:
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {PLACEHOLDERS.map((p) => (
+                      <button
+                        key={p.key}
+                        type="button"
+                        onClick={() => insertPlaceholder(p.key)}
+                        className="rounded-md bg-primary-light px-2.5 py-1 text-[11px] font-medium text-accent transition-colors hover:bg-accent-subtle"
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Editor */}
+                <textarea
+                  value={editValue}
+                  onChange={(e) => setEditValue(e.target.value)}
+                  rows={8}
+                  className="input-field resize-none font-mono text-xs leading-relaxed"
+                />
+
+                {/* Preview */}
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewId(isPreviewing ? null : tmpl.id)}
+                    className="mb-2 text-[11px] text-accent hover:underline"
+                  >
+                    {isPreviewing ? "ซ่อนตัวอย่าง" : "ดูตัวอย่างข้อความ"}
+                  </button>
+                  {isPreviewing && (
+                    <div className="rounded-lg bg-primary p-3 font-mono text-xs leading-relaxed text-text whitespace-pre-wrap">
+                      {getPreview(editValue)}
+                    </div>
+                  )}
+                </div>
+
+                {/* Actions */}
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleSave(tmpl.id)}
+                    disabled={saving}
+                    className="btn-primary text-sm disabled:opacity-50"
+                  >
+                    {saving ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Save className="h-4 w-4" />
+                    )}
+                    บันทึก
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditingId(null)}
+                    className="btn-ghost text-sm"
+                  >
+                    ยกเลิก
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <div className="rounded-lg bg-primary p-3 font-mono text-xs leading-relaxed text-text-muted whitespace-pre-wrap">
+                  {tmpl.template}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => startEdit(tmpl)}
+                  className="btn-tertiary mt-3 text-xs"
+                >
+                  แก้ไขข้อความ
+                </button>
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
