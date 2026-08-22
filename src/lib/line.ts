@@ -73,7 +73,10 @@ const messagingClient = new messagingApi.MessagingApiClient({
 /**
  * Push a text message to a specific user
  */
-export async function pushMessage(userId: string, text: string): Promise<boolean> {
+export async function pushMessage(
+  userId: string,
+  text: string,
+): Promise<boolean> {
   try {
     await messagingClient.pushMessage({
       to: userId,
@@ -97,25 +100,9 @@ export async function sendBookingConfirmation(
     date: string;
     timeBlock: string;
     services: string[];
-  }
+  },
 ): Promise<boolean> {
-  const serviceList = booking.services.map((s) => `  • ${s}`).join("\n");
-
-  const message = [
-    `✅ การจองได้รับการยืนยัน`,
-    ``,
-    `รหัสจอง: ${booking.bookingCode}`,
-    `ชื่อ: ${booking.customerName}`,
-    `วันนัด: ${booking.date}`,
-    `เวลา: ${booking.timeBlock}`,
-    ``,
-    `รายการบริการ:`,
-    serviceList,
-    ``,
-    `หากต้องการเปลี่ยนแปลง กรุณาติดต่อศูนย์บริการ`,
-  ].join("\n");
-
-  return pushMessage(userId, message);
+  return sendFromTemplate(userId, "CONFIRMED", booking);
 }
 
 /**
@@ -126,27 +113,48 @@ export async function sendStatusUpdate(
   booking: {
     bookingCode: string;
     status: string;
+    date?: string;
+    timeBlock?: string;
+    customerName?: string;
     services: string[];
-  }
+  },
 ): Promise<boolean> {
-  const statusLabels: Record<string, string> = {
-    PENDING: "⏳ รอดำเนินการ",
-    CONFIRMED: "✅ ยืนยันแล้ว",
-    COMPLETED: "🎉 เสร็จสิ้น",
-    CANCELLED: "❌ ยกเลิก",
-  };
+  return sendFromTemplate(userId, booking.status, booking);
+}
 
-  const serviceList = booking.services.map((s) => `  • ${s}`).join("\n");
+/**
+ * Build message from DB template and send
+ * Falls back to a simple default if no template found
+ */
+async function sendFromTemplate(
+  userId: string,
+  trigger: string,
+  data: {
+    bookingCode: string;
+    customerName?: string;
+    date?: string;
+    timeBlock?: string;
+    services: string[];
+  },
+): Promise<boolean> {
+  // Dynamic import to avoid circular deps
+  const { prisma } = await import("@/lib/prisma");
 
-  const message = [
-    `📋 อัปเดตสถานะการจอง`,
-    ``,
-    `รหัสจอง: ${booking.bookingCode}`,
-    `สถานะ: ${statusLabels[booking.status] || booking.status}`,
-    ``,
-    `รายการบริการ:`,
-    serviceList,
-  ].join("\n");
+  const tmpl = await prisma.notificationTemplate.findUnique({
+    where: { trigger },
+  });
+
+  // Template disabled or not found
+  if (!tmpl || !tmpl.active) return false;
+
+  const serviceList = data.services.map((s) => `  • ${s}`).join("\n");
+
+  const message = tmpl.template
+    .replace(/\{bookingCode\}/g, data.bookingCode || "")
+    .replace(/\{customerName\}/g, data.customerName || "")
+    .replace(/\{date\}/g, data.date || "")
+    .replace(/\{timeBlock\}/g, data.timeBlock || "")
+    .replace(/\{services\}/g, serviceList);
 
   return pushMessage(userId, message);
 }
