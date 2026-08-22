@@ -13,18 +13,20 @@ import {
   UserPlus,
 } from "lucide-react";
 import { useState, useEffect, Suspense } from "react";
+import LineQR from "@/components/ui/LineQR";
 
 function SuccessContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const bookingCode = searchParams.get("code");
-  const lineStatus = searchParams.get("line");
+  const lineParam = searchParams.get("line"); // only used for flash message
 
   const [copied, setCopied] = useState(false);
   const [verified, setVerified] = useState(false);
+  const [lineLinked, setLineLinked] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  // Verify booking code exists
+  // Verify booking code and check LINE status from database
   useEffect(() => {
     if (!bookingCode) {
       router.replace("/booking");
@@ -36,7 +38,10 @@ function SuccessContent() {
         if (!res.ok) throw new Error();
         return res.json();
       })
-      .then(() => setVerified(true))
+      .then((data) => {
+        setVerified(true);
+        setLineLinked(!!data.lineLinked);
+      })
       .catch(() => setVerified(false))
       .finally(() => setLoading(false));
   }, [bookingCode, router]);
@@ -117,30 +122,22 @@ function SuccessContent() {
 
         {/* LINE Connect */}
         <div className="mt-4 rounded-lg border border-border bg-primary p-4">
-          {lineStatus === "linked" ? (
+          {lineLinked ? (
             <div className="space-y-3">
               <div className="flex items-center justify-center gap-2 text-sm text-status-completed">
                 <CheckCircle className="h-4 w-4" />
                 เชื่อมต่อ LINE สำเร็จ
               </div>
               <div className="border-t border-border pt-3">
-                <p className="mb-2 text-xs text-text-muted">
+                <p className="mb-3 text-xs text-text-muted text-center">
                   เพิ่มเพื่อน LINE เพื่อให้แน่ใจว่าจะได้รับแจ้งเตือน
                 </p>
-                <a
-                  href={`https://line.me/R/ti/p/${process.env.NEXT_PUBLIC_LINE_OA_ID || "@bse-service"}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="btn-line w-full justify-center text-sm"
-                >
-                  <UserPlus className="h-4 w-4" />
-                  เพิ่มเพื่อน LINE
-                </a>
+                <LineQR />
               </div>
             </div>
           ) : (
-            <>
-              <p className="mb-3 text-xs text-text-muted">
+            <div className="space-y-3">
+              <p className="text-xs text-text-muted">
                 เชื่อมต่อ LINE เพื่อรับแจ้งเตือนเมื่อสถานะเปลี่ยน
               </p>
               <button
@@ -151,12 +148,18 @@ function SuccessContent() {
                 <MessageCircle className="h-4 w-4" />
                 เชื่อมต่อ LINE
               </button>
-              {lineStatus === "error" && (
-                <p className="mt-2 text-xs text-status-cancelled">
+              {lineParam === "error" && (
+                <p className="text-xs text-status-cancelled">
                   เชื่อมต่อไม่สำเร็จ กรุณาลองอีกครั้ง
                 </p>
               )}
-            </>
+              <div className="border-t border-border pt-3">
+                <p className="mb-3 text-xs text-text-muted text-center">
+                  หรือเพิ่มเพื่อน LINE
+                </p>
+                <LineQR />
+              </div>
+            </div>
           )}
         </div>
 

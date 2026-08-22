@@ -7,10 +7,7 @@ export async function GET(request: NextRequest) {
     const code = searchParams.get("code")?.toUpperCase().trim();
 
     if (!code) {
-      return NextResponse.json(
-        { error: "กรุณากรอกรหัสจอง" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "กรุณากรอกรหัสจอง" }, { status: 400 });
     }
 
     const booking = await prisma.booking.findUnique({
@@ -21,6 +18,7 @@ export async function GET(request: NextRequest) {
         licensePlate: true,
         date: true,
         status: true,
+        lineUserId: true,
         createdAt: true,
         updatedAt: true,
         timeBlock: {
@@ -45,7 +43,7 @@ export async function GET(request: NextRequest) {
     if (!booking) {
       return NextResponse.json(
         { error: "ไม่พบรหัสจองนี้ กรุณาตรวจสอบอีกครั้ง" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -55,6 +53,7 @@ export async function GET(request: NextRequest) {
       licensePlate: booking.licensePlate,
       date: booking.date.toISOString().split("T")[0],
       status: booking.status,
+      lineLinked: !!booking.lineUserId,
       createdAt: booking.createdAt.toISOString(),
       updatedAt: booking.updatedAt.toISOString(),
       timeBlock: {
@@ -66,7 +65,7 @@ export async function GET(request: NextRequest) {
   } catch {
     return NextResponse.json(
       { error: "เกิดข้อผิดพลาด กรุณาลองใหม่" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
