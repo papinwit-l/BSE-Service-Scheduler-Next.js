@@ -80,6 +80,7 @@ model Booking {
   status        BookingStatus @default(PENDING)
   lineUserId    String?       @map("line_user_id") @db.VarChar(100)
   notes         String?       @db.Text
+  reminderSent  Boolean       @default(false) @map("reminder_sent")
   createdAt     DateTime      @default(now()) @map("created_at")
   updatedAt     DateTime      @updatedAt @map("updated_at")
 

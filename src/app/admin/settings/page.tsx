@@ -1042,6 +1042,7 @@ const TRIGGER_LABELS: Record<string, string> = {
   CONFIRMED: "ยืนยันการจอง",
   COMPLETED: "บริการเสร็จสิ้น",
   CANCELLED: "ยกเลิกการจอง",
+  REMINDER: "แจ้งเตือนล่วงหน้า (1 วันก่อนนัด)",
 };
 
 const PLACEHOLDERS = [

@@ -116,6 +116,22 @@ async function main() {
 
 หากต้องการจองใหม่ สามารถจองผ่านเว็บไซต์ได้`,
     },
+    {
+      trigger: "REMINDER",
+      template: `🔔 แจ้งเตือนนัดหมาย
+
+สวัสดีค่ะ คุณ{customerName}
+พรุ่งนี้คุณมีนัดบริการที่ BSE
+
+รหัสจอง: {bookingCode}
+วันนัด: {date}
+เวลา: {timeBlock}
+
+รายการบริการ:
+{services}
+
+หากต้องการเปลี่ยนแปลง กรุณาติดต่อศูนย์บริการ`,
+    },
   ];
 
   for (const t of templates) {
