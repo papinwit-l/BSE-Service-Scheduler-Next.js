@@ -18,6 +18,7 @@ import {
   CheckCircle,
   Send,
   Bell,
+  CalendarClock,
 } from "lucide-react";
 import { format } from "date-fns";
 import { th } from "date-fns/locale";
@@ -64,7 +65,10 @@ const STATUS_CONFIG: Record<
   },
 };
 
-const STATUS_ACTIONS: Record<string, { label: string; to: string; variant: string }[]> = {
+const STATUS_ACTIONS: Record<
+  string,
+  { label: string; to: string; variant: string }[]
+> = {
   PENDING: [
     { label: "ยืนยัน", to: "CONFIRMED", variant: "btn-primary" },
     { label: "ยกเลิก", to: "CANCELLED", variant: "btn-cancel" },
@@ -89,6 +93,7 @@ export default function AdminBookingDetailPage() {
   const [notification, setNotification] = useState("");
   const [sendNotify, setSendNotify] = useState(true);
   const [sending, setSending] = useState(false);
+  const [sendingReminder, setSendingReminder] = useState(false);
 
   useEffect(() => {
     fetch(`/api/admin/bookings/${id}`)
@@ -155,6 +160,8 @@ export default function AdminBookingDetailPage() {
     try {
       const res = await fetch(`/api/admin/bookings/${id}/notify`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
       });
       const data = await res.json();
 
@@ -167,6 +174,31 @@ export default function AdminBookingDetailPage() {
       setNotification("❌ ไม่สามารถส่งแจ้งเตือนได้");
     } finally {
       setSending(false);
+    }
+  }
+
+  async function handleSendReminder() {
+    if (!booking) return;
+    setSendingReminder(true);
+    setNotification("");
+
+    try {
+      const res = await fetch(`/api/admin/bookings/${id}/notify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trigger: "REMINDER" }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        setNotification(`❌ ${data.error}`);
+      } else {
+        setNotification("✅ ส่งเตือนนัดสำเร็จ");
+      }
+    } catch {
+      setNotification("❌ ไม่สามารถส่งเตือนนัดได้");
+    } finally {
+      setSendingReminder(false);
     }
   }
 
@@ -247,8 +279,12 @@ export default function AdminBookingDetailPage() {
                 onChange={(e) => setSendNotify(e.target.checked)}
                 className="sr-only"
               />
-              <span className={`flex h-5 w-9 items-center rounded-full transition-colors ${sendNotify ? "bg-accent" : "bg-border"}`}>
-                <span className={`h-3.5 w-3.5 rounded-full bg-white transition-transform ${sendNotify ? "translate-x-4.5" : "translate-x-0.5"}`} />
+              <span
+                className={`flex h-5 w-9 items-center rounded-full transition-colors ${sendNotify ? "bg-accent" : "bg-border"}`}
+              >
+                <span
+                  className={`h-3.5 w-3.5 rounded-full bg-white transition-transform ${sendNotify ? "translate-x-4.5" : "translate-x-0.5"}`}
+                />
               </span>
               แจ้งเตือน LINE
             </label>
@@ -278,30 +314,56 @@ export default function AdminBookingDetailPage() {
         </h2>
         <div className="grid gap-4 sm:grid-cols-2">
           <DetailRow icon={User} label="ชื่อ" value={booking.customerName} />
-          <DetailRow icon={Phone} label="เบอร์โทร" value={booking.customerPhone} />
-          <DetailRow icon={Car} label="ทะเบียนรถ" value={booking.licensePlate} mono />
+          <DetailRow
+            icon={Phone}
+            label="เบอร์โทร"
+            value={booking.customerPhone}
+          />
+          <DetailRow
+            icon={Car}
+            label="ทะเบียนรถ"
+            value={booking.licensePlate}
+            mono
+          />
           <div className="flex items-start gap-3">
             <MessageCircle className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
             <div className="flex-1">
               <div className="text-[11px] text-text-muted">LINE</div>
-              <div className={`text-sm ${booking.lineUserId ? "text-text-heading" : "text-text-subtle"}`}>
+              <div
+                className={`text-sm ${booking.lineUserId ? "text-text-heading" : "text-text-subtle"}`}
+              >
                 {booking.lineUserId ? "เชื่อมต่อแล้ว" : "ยังไม่ได้เชื่อมต่อ"}
               </div>
             </div>
             {booking.lineUserId && (
-              <button
-                type="button"
-                onClick={handleSendNotify}
-                disabled={sending}
-                className="btn-tertiary text-xs"
-              >
-                {sending ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Bell className="h-3.5 w-3.5" />
-                )}
-                ส่งแจ้งเตือน
-              </button>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleSendNotify}
+                  disabled={sending || sendingReminder}
+                  className="btn-tertiary text-xs"
+                >
+                  {sending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Bell className="h-3.5 w-3.5" />
+                  )}
+                  ส่งแจ้งเตือน
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSendReminder}
+                  disabled={sending || sendingReminder}
+                  className="btn-tertiary text-xs"
+                >
+                  {sendingReminder ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <CalendarClock className="h-3.5 w-3.5" />
+                  )}
+                  ส่งเตือนนัด
+                </button>
+              </div>
             )}
           </div>
         </div>
@@ -316,7 +378,9 @@ export default function AdminBookingDetailPage() {
           <DetailRow
             icon={Calendar}
             label="วันที่"
-            value={format(new Date(booking.date), "EEEE d MMMM yyyy", { locale: th })}
+            value={format(new Date(booking.date), "EEEE d MMMM yyyy", {
+              locale: th,
+            })}
           />
           <DetailRow
             icon={Clock}
@@ -360,11 +424,15 @@ export default function AdminBookingDetailPage() {
       {/* Timestamps */}
       <div className="text-center text-xs text-text-subtle">
         สร้างเมื่อ{" "}
-        {format(new Date(booking.createdAt), "d MMM yyyy HH:mm", { locale: th })}
+        {format(new Date(booking.createdAt), "d MMM yyyy HH:mm", {
+          locale: th,
+        })}
         {booking.updatedAt !== booking.createdAt && (
           <>
             {" · "}อัปเดต{" "}
-            {format(new Date(booking.updatedAt), "d MMM yyyy HH:mm", { locale: th })}
+            {format(new Date(booking.updatedAt), "d MMM yyyy HH:mm", {
+              locale: th,
+            })}
           </>
         )}
       </div>
