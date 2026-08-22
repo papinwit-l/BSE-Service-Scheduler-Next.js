@@ -1,25 +1,83 @@
 "use client";
 
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { CheckCircle, Copy, Search, Home, MessageCircle } from "lucide-react";
-import { useState, Suspense } from "react";
+import {
+  CheckCircle,
+  Copy,
+  Search,
+  Home,
+  MessageCircle,
+  Loader2,
+  AlertCircle,
+  UserPlus,
+} from "lucide-react";
+import { useState, useEffect, Suspense } from "react";
 
 function SuccessContent() {
   const searchParams = useSearchParams();
-  const bookingCode = searchParams.get("code") || "BK-XXXXXX";
-  const lineStatus = searchParams.get("line"); // "linked" | "error" | null
+  const router = useRouter();
+  const bookingCode = searchParams.get("code");
+  const lineStatus = searchParams.get("line");
+
   const [copied, setCopied] = useState(false);
+  const [verified, setVerified] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  // Verify booking code exists
+  useEffect(() => {
+    if (!bookingCode) {
+      router.replace("/booking");
+      return;
+    }
+
+    fetch(`/api/bookings/status?code=${bookingCode}`)
+      .then((res) => {
+        if (!res.ok) throw new Error();
+        return res.json();
+      })
+      .then(() => setVerified(true))
+      .catch(() => setVerified(false))
+      .finally(() => setLoading(false));
+  }, [bookingCode, router]);
 
   function handleCopy() {
+    if (!bookingCode) return;
     navigator.clipboard.writeText(bookingCode);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }
 
   function handleLineConnect() {
-    // Redirect to LINE Login with bookingCode as state
     window.location.href = `/api/line-login?bookingId=${bookingCode}`;
+  }
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center text-text-muted">
+        <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+        กำลังตรวจสอบ...
+      </div>
+    );
+  }
+
+  if (!verified || !bookingCode) {
+    return (
+      <div className="flex min-h-screen items-center justify-center px-6">
+        <div className="w-full max-w-sm text-center">
+          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-status-cancelled/10">
+            <AlertCircle className="h-6 w-6 text-status-cancelled" />
+          </div>
+          <h1 className="section-heading mb-2 text-lg">ไม่พบรหัสจอง</h1>
+          <p className="mb-6 text-sm text-text-muted">
+            รหัสจองไม่ถูกต้องหรือไม่มีอยู่ในระบบ
+          </p>
+          <Link href="/booking" className="btn-primary inline-flex">
+            จองคิวใหม่
+          </Link>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -60,9 +118,25 @@ function SuccessContent() {
         {/* LINE Connect */}
         <div className="mt-4 rounded-lg border border-border bg-primary p-4">
           {lineStatus === "linked" ? (
-            <div className="flex items-center justify-center gap-2 text-sm text-status-completed">
-              <CheckCircle className="h-4 w-4" />
-              เชื่อมต่อ LINE สำเร็จ — คุณจะได้รับแจ้งเตือนสถานะ
+            <div className="space-y-3">
+              <div className="flex items-center justify-center gap-2 text-sm text-status-completed">
+                <CheckCircle className="h-4 w-4" />
+                เชื่อมต่อ LINE สำเร็จ
+              </div>
+              <div className="border-t border-border pt-3">
+                <p className="mb-2 text-xs text-text-muted">
+                  เพิ่มเพื่อน LINE เพื่อให้แน่ใจว่าจะได้รับแจ้งเตือน
+                </p>
+                <a
+                  href={`https://line.me/R/ti/p/${process.env.NEXT_PUBLIC_LINE_OA_ID || "@bse-service"}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn-line w-full justify-center text-sm"
+                >
+                  <UserPlus className="h-4 w-4" />
+                  เพิ่มเพื่อน LINE
+                </a>
+              </div>
             </div>
           ) : (
             <>
@@ -110,6 +184,7 @@ export default function BookingSuccessPage() {
     <Suspense
       fallback={
         <div className="flex min-h-screen items-center justify-center text-text-muted">
+          <Loader2 className="mr-2 h-5 w-5 animate-spin" />
           กำลังโหลด...
         </div>
       }
