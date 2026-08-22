@@ -47,19 +47,39 @@ export function isValidOrigin(headers: Headers): boolean {
   // Allow in development
   if (process.env.NODE_ENV === "development") return true;
 
-  const allowedHosts = [
-    process.env.NEXTAUTH_URL,
-    process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null,
-  ].filter(Boolean) as string[];
+  // Build list of allowed origins (normalize: no trailing slash, lowercase)
+  const allowedOrigins: string[] = [];
+
+  if (process.env.NEXTAUTH_URL) {
+    allowedOrigins.push(
+      process.env.NEXTAUTH_URL.replace(/\/$/, "").toLowerCase(),
+    );
+  }
+
+  // VERCEL_URL has no protocol — e.g. "my-app.vercel.app"
+  if (process.env.VERCEL_URL) {
+    allowedOrigins.push(`https://${process.env.VERCEL_URL}`.toLowerCase());
+  }
+
+  // Vercel also sets VERCEL_PROJECT_PRODUCTION_URL
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
+    allowedOrigins.push(
+      `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`.toLowerCase(),
+    );
+  }
+
+  if (allowedOrigins.length === 0) return true; // no config = allow all
 
   // Check origin header
   if (origin) {
-    return allowedHosts.some((host) => origin.startsWith(host));
+    const normalizedOrigin = origin.replace(/\/$/, "").toLowerCase();
+    return allowedOrigins.some((host) => normalizedOrigin === host);
   }
 
   // Fall back to referer
   if (referer) {
-    return allowedHosts.some((host) => referer.startsWith(host));
+    const normalizedReferer = referer.toLowerCase();
+    return allowedOrigins.some((host) => normalizedReferer.startsWith(host));
   }
 
   // No origin or referer — likely a direct API call
