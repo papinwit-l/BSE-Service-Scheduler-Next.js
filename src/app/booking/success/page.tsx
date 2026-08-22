@@ -19,7 +19,7 @@ function SuccessContent() {
 
   function handleLineConnect() {
     // Redirect to LINE Login with bookingCode as state
-    window.location.href = `/api/auth/line?bookingId=${bookingCode}`;
+    window.location.href = `/api/line-login?bookingId=${bookingCode}`;
   }
 
   return (
