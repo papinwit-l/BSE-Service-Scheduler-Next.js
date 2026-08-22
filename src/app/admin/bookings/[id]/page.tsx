@@ -238,58 +238,60 @@ export default function AdminBookingDetailPage() {
         กลับรายการจอง
       </Link>
 
-      {/* Header */}
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <div className="text-data mb-1 text-2xl text-accent">
-            {booking.bookingCode}
-          </div>
-          <span className={statusConfig.badge}>{statusConfig.label}</span>
-        </div>
-
-        {/* Status actions */}
-        {actions.length > 0 && (
-          <div className="flex flex-col items-end gap-2">
-            <div className="flex gap-2">
-              {actions.map((action) => (
-                <button
-                  key={action.to}
-                  type="button"
-                  onClick={() => handleStatusUpdate(action.to)}
-                  disabled={!!updating}
-                  className={
-                    action.variant === "btn-cancel"
-                      ? "flex items-center gap-2 rounded-lg border border-status-cancelled/30 bg-status-cancelled/5 px-4 py-2 text-sm font-medium text-status-cancelled transition-all hover:bg-status-cancelled/10 disabled:opacity-50"
-                      : "btn-primary disabled:opacity-50"
-                  }
-                >
-                  {updating === action.to ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : action.variant === "btn-cancel" ? null : (
-                    <Send className="h-4 w-4" />
-                  )}
-                  {action.label}
-                </button>
-              ))}
+      {/* Header — code + status */}
+      <div className="rounded-lg border border-border-light bg-primary-mid p-5">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <div className="text-data mb-2 text-2xl text-accent">
+              {booking.bookingCode}
             </div>
-            <label className="flex cursor-pointer items-center gap-2 text-xs text-text-muted">
-              <input
-                type="checkbox"
-                checked={sendNotify}
-                onChange={(e) => setSendNotify(e.target.checked)}
-                className="sr-only"
-              />
-              <span
-                className={`flex h-5 w-9 items-center rounded-full transition-colors ${sendNotify ? "bg-accent" : "bg-border"}`}
-              >
-                <span
-                  className={`h-3.5 w-3.5 rounded-full bg-white transition-transform ${sendNotify ? "translate-x-4.5" : "translate-x-0.5"}`}
-                />
-              </span>
-              แจ้งเตือน LINE
-            </label>
+            <span className={statusConfig.badge}>{statusConfig.label}</span>
           </div>
-        )}
+
+          {/* Status actions */}
+          {actions.length > 0 && (
+            <div className="flex flex-col items-end gap-2">
+              <div className="flex gap-2">
+                {actions.map((action) => (
+                  <button
+                    key={action.to}
+                    type="button"
+                    onClick={() => handleStatusUpdate(action.to)}
+                    disabled={!!updating}
+                    className={
+                      action.variant === "btn-cancel"
+                        ? "flex items-center gap-2 rounded-lg border border-status-cancelled/30 bg-status-cancelled/5 px-4 py-2 text-sm font-medium text-status-cancelled transition-all hover:bg-status-cancelled/10 disabled:opacity-50"
+                        : "btn-primary disabled:opacity-50"
+                    }
+                  >
+                    {updating === action.to ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : action.variant === "btn-cancel" ? null : (
+                      <Send className="h-4 w-4" />
+                    )}
+                    {action.label}
+                  </button>
+                ))}
+              </div>
+              <label className="flex cursor-pointer items-center gap-2 text-xs text-text-muted">
+                <input
+                  type="checkbox"
+                  checked={sendNotify}
+                  onChange={(e) => setSendNotify(e.target.checked)}
+                  className="sr-only"
+                />
+                <span
+                  className={`flex h-5 w-9 items-center rounded-full transition-colors ${sendNotify ? "bg-accent" : "bg-border"}`}
+                >
+                  <span
+                    className={`h-3.5 w-3.5 rounded-full bg-white transition-transform ${sendNotify ? "translate-x-4.5" : "translate-x-0.5"}`}
+                  />
+                </span>
+                แจ้งเตือน LINE
+              </label>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Notification */}
@@ -307,86 +309,48 @@ export default function AdminBookingDetailPage() {
         </div>
       )}
 
-      {/* Customer info */}
-      <div className="rounded-lg border border-border-light bg-primary-mid p-5">
-        <h2 className="mb-4 text-xs font-medium text-text-muted uppercase tracking-wider">
-          ข้อมูลลูกค้า
-        </h2>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <DetailRow icon={User} label="ชื่อ" value={booking.customerName} />
-          <DetailRow
-            icon={Phone}
-            label="เบอร์โทร"
-            value={booking.customerPhone}
-          />
-          <DetailRow
-            icon={Car}
-            label="ทะเบียนรถ"
-            value={booking.licensePlate}
-            mono
-          />
-          <div className="flex items-start gap-3">
-            <MessageCircle className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
-            <div className="flex-1">
-              <div className="text-[11px] text-text-muted">LINE</div>
-              <div
-                className={`text-sm ${booking.lineUserId ? "text-text-heading" : "text-text-subtle"}`}
-              >
-                {booking.lineUserId ? "เชื่อมต่อแล้ว" : "ยังไม่ได้เชื่อมต่อ"}
-              </div>
-            </div>
-            {booking.lineUserId && (
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={handleSendNotify}
-                  disabled={sending || sendingReminder}
-                  className="btn-tertiary text-xs"
-                >
-                  {sending ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Bell className="h-3.5 w-3.5" />
-                  )}
-                  ส่งแจ้งเตือน
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSendReminder}
-                  disabled={sending || sendingReminder}
-                  className="btn-tertiary text-xs"
-                >
-                  {sendingReminder ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <CalendarClock className="h-3.5 w-3.5" />
-                  )}
-                  ส่งเตือนนัด
-                </button>
-              </div>
-            )}
+      {/* Two columns: customer + appointment */}
+      <div className="grid gap-4 md:grid-cols-2">
+        {/* Customer info */}
+        <div className="rounded-lg border border-border-light bg-primary-mid p-5">
+          <h2 className="mb-4 text-xs font-medium text-text-muted uppercase tracking-wider">
+            ข้อมูลลูกค้า
+          </h2>
+          <div className="space-y-4">
+            <DetailRow icon={User} label="ชื่อ" value={booking.customerName} />
+            <DetailRow
+              icon={Phone}
+              label="เบอร์โทร"
+              value={booking.customerPhone}
+            />
+            <DetailRow
+              icon={Car}
+              label="ทะเบียนรถ"
+              value={booking.licensePlate}
+              mono
+            />
           </div>
         </div>
-      </div>
 
-      {/* Appointment info */}
-      <div className="rounded-lg border border-border-light bg-primary-mid p-5">
-        <h2 className="mb-4 text-xs font-medium text-text-muted uppercase tracking-wider">
-          นัดหมาย
-        </h2>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <DetailRow
-            icon={Calendar}
-            label="วันที่"
-            value={format(new Date(booking.date), "EEEE d MMMM yyyy", {
-              locale: th,
-            })}
-          />
-          <DetailRow
-            icon={Clock}
-            label="เวลา"
-            value={`${booking.timeBlock.label} (${booking.timeBlock.time})`}
-          />
+        {/* Appointment */}
+        <div className="rounded-lg border border-border-light bg-primary-mid p-5">
+          <h2 className="mb-4 text-xs font-medium text-text-muted uppercase tracking-wider">
+            นัดหมาย
+          </h2>
+          <div className="space-y-4">
+            <DetailRow
+              icon={Calendar}
+              label="วันที่"
+              value={format(new Date(booking.date), "EEEE d MMMM yyyy", {
+                locale: th,
+              })}
+            />
+            <DetailRow
+              icon={Clock}
+              label="เวลา"
+              value={`${booking.timeBlock.label} (${booking.timeBlock.time})`}
+            />
+          </div>
         </div>
       </div>
 
@@ -395,15 +359,15 @@ export default function AdminBookingDetailPage() {
         <h2 className="mb-3 text-xs font-medium text-text-muted uppercase tracking-wider">
           รายการบริการ
         </h2>
-        <div className="space-y-2">
+        <div className="flex flex-wrap gap-2">
           {booking.services.map((service) => (
-            <div
+            <span
               key={service.id}
-              className="flex items-center gap-2 text-sm text-text"
+              className="flex items-center gap-1.5 rounded-md bg-primary-light px-3 py-1.5 text-sm text-text"
             >
-              <Wrench className="h-3.5 w-3.5 text-accent" />
+              <Wrench className="h-3 w-3 text-accent" />
               {service.name}
-            </div>
+            </span>
           ))}
         </div>
       </div>
@@ -415,11 +379,70 @@ export default function AdminBookingDetailPage() {
             หมายเหตุ
           </h2>
           <div className="flex items-start gap-2 text-sm text-text">
-            <FileText className="mt-0.5 h-3.5 w-3.5 text-text-muted" />
+            <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0 text-text-muted" />
             {booking.notes}
           </div>
         </div>
       )}
+
+      {/* LINE notification */}
+      <div className="rounded-lg border border-border-light bg-primary-mid p-5">
+        <h2 className="mb-4 text-xs font-medium text-text-muted uppercase tracking-wider">
+          การแจ้งเตือน LINE
+        </h2>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div
+              className={`flex h-8 w-8 items-center justify-center rounded-full ${booking.lineUserId ? "bg-status-completed/10" : "bg-primary-light"}`}
+            >
+              <MessageCircle
+                className={`h-4 w-4 ${booking.lineUserId ? "text-status-completed" : "text-text-subtle"}`}
+              />
+            </div>
+            <div>
+              <div className="text-sm font-medium text-text-heading">
+                {booking.lineUserId ? "เชื่อมต่อแล้ว" : "ยังไม่ได้เชื่อมต่อ"}
+              </div>
+              <div className="text-xs text-text-muted">
+                {booking.lineUserId
+                  ? "สามารถส่งแจ้งเตือนได้"
+                  : "ลูกค้ายังไม่ได้เชื่อมต่อ LINE"}
+              </div>
+            </div>
+          </div>
+
+          {booking.lineUserId && (
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={handleSendNotify}
+                disabled={sending || sendingReminder}
+                className="btn-tertiary text-xs"
+              >
+                {sending ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Bell className="h-3.5 w-3.5" />
+                )}
+                ส่งแจ้งเตือน
+              </button>
+              <button
+                type="button"
+                onClick={handleSendReminder}
+                disabled={sending || sendingReminder}
+                className="btn-tertiary text-xs"
+              >
+                {sendingReminder ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <CalendarClock className="h-3.5 w-3.5" />
+                )}
+                ส่งเตือนนัด
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Timestamps */}
       <div className="text-center text-xs text-text-subtle">
