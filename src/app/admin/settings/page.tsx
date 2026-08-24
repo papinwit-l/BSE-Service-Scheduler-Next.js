@@ -19,6 +19,7 @@ import {
   MessageSquare,
   Save,
   Pencil,
+  GripVertical,
 } from "lucide-react";
 import {
   format,
@@ -37,39 +38,13 @@ import {
 import { th } from "date-fns/locale";
 
 // ─── Types ───
-type Service = {
-  id: string;
-  name: string;
-  description: string | null;
-  active: boolean;
-  sortOrder: number;
-};
-type TimeBlock = {
-  id: string;
-  label: string;
-  startTime: string;
-  endTime: string;
-  maxBookings: number;
-  active: boolean;
-};
+type Service = { id: string; name: string; description: string | null; active: boolean; sortOrder: number };
+type TimeBlock = { id: string; label: string; startTime: string; endTime: string; maxBookings: number; active: boolean };
 type DayConfig = { id: string; dayOfWeek: number; isClosed: boolean };
 type ClosedDate = { id: string; date: string; reason: string | null };
-type NotificationTemplate = {
-  id: string;
-  trigger: string;
-  template: string;
-  active: boolean;
-};
+type NotificationTemplate = { id: string; trigger: string; template: string; active: boolean };
 
-const DAY_LABELS = [
-  "อาทิตย์",
-  "จันทร์",
-  "อังคาร",
-  "พุธ",
-  "พฤหัสบดี",
-  "ศุกร์",
-  "เสาร์",
-];
+const DAY_LABELS = ["อาทิตย์", "จันทร์", "อังคาร", "พุธ", "พฤหัสบดี", "ศุกร์", "เสาร์"];
 const TABS = [
   { key: "services", label: "รายการบริการ", icon: Wrench },
   { key: "timeblocks", label: "ช่วงเวลา", icon: Clock },
@@ -78,7 +53,7 @@ const TABS = [
   { key: "notifications", label: "แจ้งเตือน LINE", icon: MessageSquare },
 ] as const;
 
-type TabKey = (typeof TABS)[number]["key"];
+type TabKey = typeof TABS[number]["key"];
 
 export default function AdminSettingsPage() {
   const [tab, setTab] = useState<TabKey>("services");
@@ -150,58 +125,52 @@ export default function AdminSettingsPage() {
 
       {/* Flash message */}
       {msg && (
-        <div
-          className={`rounded-lg p-3 text-sm ${msg.startsWith("✅") ? "bg-status-completed/5 text-status-completed" : "bg-status-cancelled/5 text-status-cancelled"}`}
-        >
+        <div className={`rounded-lg p-3 text-sm ${msg.startsWith("✅") ? "bg-status-completed/5 text-status-completed" : "bg-status-cancelled/5 text-status-cancelled"}`}>
           {msg}
         </div>
       )}
 
       {/* Tab content */}
       {tab === "services" && (
-        <ServicesTab
-          services={services}
-          setServices={setServices}
-          flash={flash}
-        />
+        <ServicesTab services={services} setServices={setServices} flash={flash} />
       )}
       {tab === "timeblocks" && (
-        <TimeBlocksTab
-          blocks={timeBlocks}
-          setBlocks={setTimeBlocks}
-          flash={flash}
-        />
+        <TimeBlocksTab blocks={timeBlocks} setBlocks={setTimeBlocks} flash={flash} />
       )}
       {tab === "schedule" && (
-        <ScheduleTab
-          configs={dayConfigs}
-          setConfigs={setDayConfigs}
-          flash={flash}
-        />
+        <ScheduleTab configs={dayConfigs} setConfigs={setDayConfigs} flash={flash} />
       )}
       {tab === "holidays" && (
-        <HolidaysTab
-          dates={closedDates}
-          setDates={setClosedDates}
-          flash={flash}
-        />
+        <HolidaysTab dates={closedDates} setDates={setClosedDates} flash={flash} />
       )}
       {tab === "notifications" && (
-        <NotificationsTab
-          templates={templates}
-          setTemplates={setTemplates}
-          flash={flash}
-        />
+        <NotificationsTab templates={templates} setTemplates={setTemplates} flash={flash} />
       )}
     </div>
   );
 }
 
 // ─── Services Tab ───
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+
 function ServicesTab({
-  services,
-  setServices,
-  flash,
+  services, setServices, flash,
 }: {
   services: Service[];
   setServices: (s: Service[]) => void;
@@ -214,6 +183,11 @@ function ServicesTab({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [editDesc, setEditDesc] = useState("");
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
 
   function startEdit(service: Service) {
     setEditingId(service.id);
@@ -230,29 +204,12 @@ function ServicesTab({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id, name: editName, description: editDesc }),
       });
-      if (!res.ok) {
-        const d = await res.json();
-        flash(`❌ ${d.error}`);
-        return;
-      }
-      setServices(
-        services.map((s) =>
-          s.id === id
-            ? {
-                ...s,
-                name: editName.trim(),
-                description: editDesc.trim() || null,
-              }
-            : s,
-        ),
-      );
+      if (!res.ok) { const d = await res.json(); flash(`❌ ${d.error}`); return; }
+      setServices(services.map((s) => s.id === id ? { ...s, name: editName.trim(), description: editDesc.trim() || null } : s));
       setEditingId(null);
       flash("✅ แก้ไขบริการสำเร็จ");
-    } catch {
-      flash("❌ เกิดข้อผิดพลาด");
-    } finally {
-      setProcessing("");
-    }
+    } catch { flash("❌ เกิดข้อผิดพลาด"); }
+    finally { setProcessing(""); }
   }
 
   async function handleAdd() {
@@ -264,21 +221,13 @@ function ServicesTab({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, description: desc }),
       });
-      if (!res.ok) {
-        const d = await res.json();
-        flash(`❌ ${d.error}`);
-        return;
-      }
+      if (!res.ok) { const d = await res.json(); flash(`❌ ${d.error}`); return; }
       const service = await res.json();
       setServices([...services, service]);
-      setName("");
-      setDesc("");
+      setName(""); setDesc("");
       flash("✅ เพิ่มบริการสำเร็จ");
-    } catch {
-      flash("❌ เกิดข้อผิดพลาด");
-    } finally {
-      setAdding(false);
-    }
+    } catch { flash("❌ เกิดข้อผิดพลาด"); }
+    finally { setAdding(false); }
   }
 
   async function toggleActive(service: Service) {
@@ -290,16 +239,9 @@ function ServicesTab({
         body: JSON.stringify({ id: service.id, active: !service.active }),
       });
       if (res.ok) {
-        setServices(
-          services.map((s) =>
-            s.id === service.id ? { ...s, active: !s.active } : s,
-          ),
-        );
+        setServices(services.map((s) => s.id === service.id ? { ...s, active: !s.active } : s));
       }
-    } catch {
-    } finally {
-      setProcessing("");
-    }
+    } catch {} finally { setProcessing(""); }
   }
 
   async function handleDelete(service: Service) {
@@ -312,168 +254,132 @@ function ServicesTab({
         body: JSON.stringify({ id: service.id }),
       });
       const data = await res.json();
-      if (!res.ok) {
-        flash(`❌ ${data.error}`);
-        return;
-      }
+      if (!res.ok) { flash(`❌ ${data.error}`); return; }
       setServices(services.filter((s) => s.id !== service.id));
       flash("✅ ลบบริการสำเร็จ");
-    } catch {
-      flash("❌ เกิดข้อผิดพลาด");
-    } finally {
-      setProcessing("");
-    }
+    } catch { flash("❌ เกิดข้อผิดพลาด"); }
+    finally { setProcessing(""); }
+  }
+
+  async function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const oldIndex = services.findIndex((s) => s.id === active.id);
+    const newIndex = services.findIndex((s) => s.id === over.id);
+    const reordered = arrayMove(services, oldIndex, newIndex);
+
+    setServices(reordered);
+
+    try {
+      const res = await fetch("/api/admin/services/reorder", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderedIds: reordered.map((s) => s.id) }),
+      });
+      if (res.ok) flash("✅ เรียงลำดับสำเร็จ");
+    } catch { flash("❌ เรียงลำดับไม่สำเร็จ"); }
   }
 
   return (
     <div className="space-y-4">
       {/* Add form */}
       <div className="rounded-lg border border-border-light bg-primary-mid p-4 space-y-3">
-        <div className="text-xs font-medium text-text-muted">
-          เพิ่มบริการใหม่
-        </div>
+        <div className="text-xs font-medium text-text-muted">เพิ่มบริการใหม่</div>
         <div className="input-wrapper">
           <Wrench className="h-4 w-4 shrink-0 text-text-muted" />
-          <input
-            type="text"
-            placeholder="ชื่อบริการ"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="input-inner"
-          />
+          <input type="text" placeholder="ชื่อบริการ" value={name} onChange={(e) => setName(e.target.value)} className="input-inner" />
         </div>
-        <input
-          type="text"
-          placeholder="รายละเอียด (ไม่บังคับ)"
-          value={desc}
-          onChange={(e) => setDesc(e.target.value)}
-          className="input-field"
-        />
-        <button
-          type="button"
-          onClick={handleAdd}
-          disabled={adding || !name.trim()}
-          className="btn-primary text-sm disabled:opacity-50"
-        >
-          {adding ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Plus className="h-4 w-4" />
-          )}
+        <input type="text" placeholder="รายละเอียด (ไม่บังคับ)" value={desc} onChange={(e) => setDesc(e.target.value)} className="input-field" />
+        <button type="button" onClick={handleAdd} disabled={adding || !name.trim()} className="btn-primary text-sm disabled:opacity-50">
+          {adding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
           เพิ่มบริการ
         </button>
       </div>
 
-      {/* List */}
+      {/* Sortable list */}
       <div className="space-y-2">
-        {services.map((service) => {
-          const isProcessing = processing === service.id;
-          const isEditing = editingId === service.id;
-
-          return (
-            <div
-              key={service.id}
-              className={`relative rounded-lg border border-border-light bg-primary-mid p-4 ${!service.active ? "opacity-50" : ""}`}
-            >
-              {isProcessing && (
-                <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-primary-mid/90">
-                  <Loader2 className="h-5 w-5 animate-spin text-accent" />
-                </div>
-              )}
-
-              {isEditing ? (
-                <div className="space-y-2">
-                  <input
-                    type="text"
-                    value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
-                    className="input-field text-sm"
-                    placeholder="ชื่อบริการ"
-                  />
-                  <input
-                    type="text"
-                    value={editDesc}
-                    onChange={(e) => setEditDesc(e.target.value)}
-                    className="input-field text-xs"
-                    placeholder="รายละเอียด (ไม่บังคับ)"
-                  />
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleSaveEdit(service.id)}
-                      disabled={!editName.trim()}
-                      className="btn-primary text-xs disabled:opacity-50"
-                    >
-                      <Save className="h-3.5 w-3.5" />
-                      บันทึก
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setEditingId(null)}
-                      className="btn-ghost text-xs"
-                    >
-                      ยกเลิก
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex items-center gap-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium text-text-heading">
-                      {service.name}
-                    </div>
-                    {service.description && (
-                      <div className="text-xs text-text-muted mt-0.5">
-                        {service.description}
-                      </div>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => startEdit(service)}
-                    disabled={isProcessing}
-                    className="text-text-muted hover:text-accent"
-                    title="แก้ไข"
-                  >
-                    <Pencil className="h-4 w-4" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => toggleActive(service)}
-                    disabled={isProcessing}
-                    className="text-text-muted hover:text-accent"
-                    title={service.active ? "ปิดการใช้งาน" : "เปิดการใช้งาน"}
-                  >
-                    {service.active ? (
-                      <ToggleRight className="h-5 w-5 text-accent" />
-                    ) : (
-                      <ToggleLeft className="h-5 w-5" />
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleDelete(service)}
-                    disabled={isProcessing}
-                    className="text-text-muted hover:text-status-cancelled"
-                    title="ลบ"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </div>
-              )}
-            </div>
-          );
-        })}
+        <div className="flex items-center gap-2 text-[10px] text-text-muted">
+          <GripVertical className="h-3 w-3" />
+          ลากเพื่อเรียงลำดับ
+        </div>
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <SortableContext items={services.map((s) => s.id)} strategy={verticalListSortingStrategy}>
+            {services.map((service) => (
+              <SortableServiceItem
+                key={service.id}
+                service={service}
+                isProcessing={processing === service.id}
+                isEditing={editingId === service.id}
+                editName={editName}
+                editDesc={editDesc}
+                onEditNameChange={setEditName}
+                onEditDescChange={setEditDesc}
+                onStartEdit={() => startEdit(service)}
+                onSaveEdit={() => handleSaveEdit(service.id)}
+                onCancelEdit={() => setEditingId(null)}
+                onToggle={() => toggleActive(service)}
+                onDelete={() => handleDelete(service)}
+              />
+            ))}
+          </SortableContext>
+        </DndContext>
       </div>
     </div>
   );
 }
 
+function SortableServiceItem({
+  service, isProcessing, isEditing, editName, editDesc,
+  onEditNameChange, onEditDescChange, onStartEdit, onSaveEdit, onCancelEdit, onToggle, onDelete,
+}: {
+  service: Service; isProcessing: boolean; isEditing: boolean;
+  editName: string; editDesc: string;
+  onEditNameChange: (v: string) => void; onEditDescChange: (v: string) => void;
+  onStartEdit: () => void; onSaveEdit: () => void; onCancelEdit: () => void;
+  onToggle: () => void; onDelete: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: service.id });
+  const style = { transform: CSS.Transform.toString(transform), transition };
+
+  return (
+    <div ref={setNodeRef} style={style} className={`relative rounded-lg border bg-primary-mid p-4 ${isDragging ? "z-50 border-accent shadow-lg shadow-accent/10" : "border-border-light"} ${!service.active ? "opacity-50" : ""}`}>
+      {isProcessing && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-primary-mid/90">
+          <Loader2 className="h-5 w-5 animate-spin text-accent" />
+        </div>
+      )}
+      {isEditing ? (
+        <div className="space-y-2">
+          <input type="text" value={editName} onChange={(e) => onEditNameChange(e.target.value)} className="input-field text-sm" placeholder="ชื่อบริการ" />
+          <input type="text" value={editDesc} onChange={(e) => onEditDescChange(e.target.value)} className="input-field text-xs" placeholder="รายละเอียด (ไม่บังคับ)" />
+          <div className="flex gap-2">
+            <button type="button" onClick={onSaveEdit} disabled={!editName.trim()} className="btn-primary text-xs disabled:opacity-50"><Save className="h-3.5 w-3.5" /> บันทึก</button>
+            <button type="button" onClick={onCancelEdit} className="btn-ghost text-xs">ยกเลิก</button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-center gap-3">
+          <button type="button" {...attributes} {...listeners} className="cursor-grab touch-none text-text-subtle hover:text-text-muted active:cursor-grabbing">
+            <GripVertical className="h-4 w-4" />
+          </button>
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-medium text-text-heading">{service.name}</div>
+            {service.description && <div className="text-xs text-text-muted mt-0.5">{service.description}</div>}
+          </div>
+          <button type="button" onClick={onStartEdit} disabled={isProcessing} className="text-text-muted hover:text-accent" title="แก้ไข"><Pencil className="h-4 w-4" /></button>
+          <button type="button" onClick={onToggle} disabled={isProcessing} className="text-text-muted hover:text-accent" title={service.active ? "ปิดการใช้งาน" : "เปิดการใช้งาน"}>{service.active ? <ToggleRight className="h-5 w-5 text-accent" /> : <ToggleLeft className="h-5 w-5" />}</button>
+          <button type="button" onClick={onDelete} disabled={isProcessing} className="text-text-muted hover:text-status-cancelled" title="ลบ"><Trash2 className="h-4 w-4" /></button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 // ─── Time Blocks Tab ───
 function TimeBlocksTab({
-  blocks,
-  setBlocks,
-  flash,
+  blocks, setBlocks, flash,
 }: {
   blocks: TimeBlock[];
   setBlocks: (b: TimeBlock[]) => void;
@@ -492,30 +398,15 @@ function TimeBlocksTab({
       const res = await fetch("/api/admin/time-blocks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          label,
-          startTime,
-          endTime,
-          maxBookings: parseInt(maxBookings) || 5,
-        }),
+        body: JSON.stringify({ label, startTime, endTime, maxBookings: parseInt(maxBookings) || 5 }),
       });
-      if (!res.ok) {
-        const d = await res.json();
-        flash(`❌ ${d.error}`);
-        return;
-      }
+      if (!res.ok) { const d = await res.json(); flash(`❌ ${d.error}`); return; }
       const block = await res.json();
       setBlocks([...blocks, block]);
-      setLabel("");
-      setStartTime("");
-      setEndTime("");
-      setMaxBookings("5");
+      setLabel(""); setStartTime(""); setEndTime(""); setMaxBookings("5");
       flash("✅ เพิ่มช่วงเวลาสำเร็จ");
-    } catch {
-      flash("❌ เกิดข้อผิดพลาด");
-    } finally {
-      setAdding(false);
-    }
+    } catch { flash("❌ เกิดข้อผิดพลาด"); }
+    finally { setAdding(false); }
   }
 
   async function toggleActive(block: TimeBlock) {
@@ -526,11 +417,7 @@ function TimeBlocksTab({
         body: JSON.stringify({ id: block.id, active: !block.active }),
       });
       if (res.ok) {
-        setBlocks(
-          blocks.map((b) =>
-            b.id === block.id ? { ...b, active: !b.active } : b,
-          ),
-        );
+        setBlocks(blocks.map((b) => b.id === block.id ? { ...b, active: !b.active } : b));
       }
     } catch {}
   }
@@ -545,11 +432,7 @@ function TimeBlocksTab({
         body: JSON.stringify({ id: block.id, maxBookings: max }),
       });
       if (res.ok) {
-        setBlocks(
-          blocks.map((b) =>
-            b.id === block.id ? { ...b, maxBookings: max } : b,
-          ),
-        );
+        setBlocks(blocks.map((b) => b.id === block.id ? { ...b, maxBookings: max } : b));
         flash("✅ บันทึกแล้ว");
       }
     } catch {}
@@ -559,57 +442,24 @@ function TimeBlocksTab({
     <div className="space-y-4">
       {/* Add form */}
       <div className="rounded-lg border border-border-light bg-primary-mid p-4 space-y-3">
-        <div className="text-xs font-medium text-text-muted">
-          เพิ่มช่วงเวลาใหม่
-        </div>
-        <input
-          type="text"
-          placeholder="ชื่อ (เช่น เช้า)"
-          value={label}
-          onChange={(e) => setLabel(e.target.value)}
-          className="input-field"
-        />
+        <div className="text-xs font-medium text-text-muted">เพิ่มช่วงเวลาใหม่</div>
+        <input type="text" placeholder="ชื่อ (เช่น เช้า)" value={label} onChange={(e) => setLabel(e.target.value)} className="input-field" />
         <div className="grid grid-cols-3 gap-2">
           <div>
             <label className="input-label">เริ่ม</label>
-            <input
-              type="time"
-              value={startTime}
-              onChange={(e) => setStartTime(e.target.value)}
-              className="input-field text-xs"
-            />
+            <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} className="input-field text-xs" />
           </div>
           <div>
             <label className="input-label">สิ้นสุด</label>
-            <input
-              type="time"
-              value={endTime}
-              onChange={(e) => setEndTime(e.target.value)}
-              className="input-field text-xs"
-            />
+            <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} className="input-field text-xs" />
           </div>
           <div>
             <label className="input-label">จำนวนคิว</label>
-            <input
-              type="number"
-              min="1"
-              value={maxBookings}
-              onChange={(e) => setMaxBookings(e.target.value)}
-              className="input-field text-xs"
-            />
+            <input type="number" min="1" value={maxBookings} onChange={(e) => setMaxBookings(e.target.value)} className="input-field text-xs" />
           </div>
         </div>
-        <button
-          type="button"
-          onClick={handleAdd}
-          disabled={adding}
-          className="btn-primary text-sm disabled:opacity-50"
-        >
-          {adding ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Plus className="h-4 w-4" />
-          )}
+        <button type="button" onClick={handleAdd} disabled={adding} className="btn-primary text-sm disabled:opacity-50">
+          {adding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
           เพิ่มช่วงเวลา
         </button>
       </div>
@@ -617,18 +467,11 @@ function TimeBlocksTab({
       {/* List */}
       <div className="space-y-2">
         {blocks.map((block) => (
-          <div
-            key={block.id}
-            className={`rounded-lg border border-border-light bg-primary-mid p-4 ${!block.active ? "opacity-50" : ""}`}
-          >
+          <div key={block.id} className={`rounded-lg border border-border-light bg-primary-mid p-4 ${!block.active ? "opacity-50" : ""}`}>
             <div className="flex items-center gap-3">
               <div className="flex-1">
-                <div className="text-sm font-medium text-text-heading">
-                  {block.label}
-                </div>
-                <div className="font-mono text-xs text-text-muted">
-                  {block.startTime}–{block.endTime}
-                </div>
+                <div className="text-sm font-medium text-text-heading">{block.label}</div>
+                <div className="font-mono text-xs text-text-muted">{block.startTime}–{block.endTime}</div>
               </div>
               <div className="flex items-center gap-2">
                 <label className="text-[10px] text-text-muted">คิว:</label>
@@ -640,16 +483,8 @@ function TimeBlocksTab({
                   className="input-field w-16 text-center text-xs"
                 />
               </div>
-              <button
-                type="button"
-                onClick={() => toggleActive(block)}
-                className="text-text-muted hover:text-accent"
-              >
-                {block.active ? (
-                  <ToggleRight className="h-5 w-5 text-accent" />
-                ) : (
-                  <ToggleLeft className="h-5 w-5" />
-                )}
+              <button type="button" onClick={() => toggleActive(block)} className="text-text-muted hover:text-accent">
+                {block.active ? <ToggleRight className="h-5 w-5 text-accent" /> : <ToggleLeft className="h-5 w-5" />}
               </button>
             </div>
           </div>
@@ -661,9 +496,7 @@ function TimeBlocksTab({
 
 // ─── Schedule Tab ───
 function ScheduleTab({
-  configs,
-  setConfigs,
-  flash,
+  configs, setConfigs, flash,
 }: {
   configs: DayConfig[];
   setConfigs: (c: DayConfig[]) => void;
@@ -674,60 +507,35 @@ function ScheduleTab({
       const res = await fetch("/api/admin/day-configs", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          dayOfWeek: config.dayOfWeek,
-          isClosed: !config.isClosed,
-        }),
+        body: JSON.stringify({ dayOfWeek: config.dayOfWeek, isClosed: !config.isClosed }),
       });
       if (res.ok) {
-        setConfigs(
-          configs.map((c) =>
-            c.dayOfWeek === config.dayOfWeek
-              ? { ...c, isClosed: !c.isClosed }
-              : c,
-          ),
-        );
-        flash(
-          `✅ ${DAY_LABELS[config.dayOfWeek]} — ${!config.isClosed ? "ปิด" : "เปิด"}ทำการ`,
-        );
+        setConfigs(configs.map((c) => c.dayOfWeek === config.dayOfWeek ? { ...c, isClosed: !c.isClosed } : c));
+        flash(`✅ ${DAY_LABELS[config.dayOfWeek]} — ${!config.isClosed ? "ปิด" : "เปิด"}ทำการ`);
       }
-    } catch {
-      flash("❌ เกิดข้อผิดพลาด");
-    }
+    } catch { flash("❌ เกิดข้อผิดพลาด"); }
   }
 
   return (
     <div className="space-y-2">
-      <p className="text-xs text-text-muted mb-2">
-        เปิด/ปิดวันทำการประจำสัปดาห์
-      </p>
+      <p className="text-xs text-text-muted mb-2">เปิด/ปิดวันทำการประจำสัปดาห์</p>
       {configs.map((config) => (
-        <div
-          key={config.dayOfWeek}
-          className="flex items-center justify-between rounded-lg border border-border-light bg-primary-mid p-4"
-        >
+        <div key={config.dayOfWeek} className="flex items-center justify-between rounded-lg border border-border-light bg-primary-mid p-4">
           <div className="flex items-center gap-3">
-            <Calendar
-              className={`h-4 w-4 ${config.isClosed ? "text-status-cancelled" : "text-accent"}`}
-            />
-            <span
-              className={`text-sm font-medium ${config.isClosed ? "text-text-muted line-through" : "text-text-heading"}`}
-            >
+            <Calendar className={`h-4 w-4 ${config.isClosed ? "text-status-cancelled" : "text-accent"}`} />
+            <span className={`text-sm font-medium ${config.isClosed ? "text-text-muted line-through" : "text-text-heading"}`}>
               {DAY_LABELS[config.dayOfWeek]}
             </span>
           </div>
           <div className="flex items-center gap-3">
-            <span
-              className={`text-xs ${config.isClosed ? "text-status-cancelled" : "text-status-completed"}`}
-            >
+            <span className={`text-xs ${config.isClosed ? "text-status-cancelled" : "text-status-completed"}`}>
               {config.isClosed ? "หยุด" : "เปิด"}
             </span>
             <button type="button" onClick={() => toggleDay(config)}>
-              {config.isClosed ? (
-                <ToggleLeft className="h-5 w-5 text-text-muted hover:text-accent" />
-              ) : (
-                <ToggleRight className="h-5 w-5 text-accent" />
-              )}
+              {config.isClosed
+                ? <ToggleLeft className="h-5 w-5 text-text-muted hover:text-accent" />
+                : <ToggleRight className="h-5 w-5 text-accent" />
+              }
             </button>
           </div>
         </div>
@@ -738,9 +546,7 @@ function ScheduleTab({
 
 // ─── Holidays Tab ───
 function HolidaysTab({
-  dates,
-  setDates,
-  flash,
+  dates, setDates, flash,
 }: {
   dates: ClosedDate[];
   setDates: (d: ClosedDate[]) => void;
@@ -765,28 +571,15 @@ function HolidaysTab({
       const res = await fetch("/api/admin/closed-dates", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          date: addDate,
-          reason: targetDate ? "" : reason,
-        }),
+        body: JSON.stringify({ date: addDate, reason: targetDate ? "" : reason }),
       });
-      if (!res.ok) {
-        const d = await res.json();
-        flash(`❌ ${d.error}`);
-        return;
-      }
+      if (!res.ok) { const d = await res.json(); flash(`❌ ${d.error}`); return; }
       const closed = await res.json();
       setDates([...dates, closed].sort((a, b) => a.date.localeCompare(b.date)));
-      if (!targetDate) {
-        setDate("");
-        setReason("");
-      }
+      if (!targetDate) { setDate(""); setReason(""); }
       flash("✅ เพิ่มวันหยุดสำเร็จ");
-    } catch {
-      flash("❌ เกิดข้อผิดพลาด");
-    } finally {
-      setAdding(false);
-    }
+    } catch { flash("❌ เกิดข้อผิดพลาด"); }
+    finally { setAdding(false); }
   }
 
   async function handleDelete(id: string) {
@@ -801,9 +594,7 @@ function HolidaysTab({
         setDates(dates.filter((d) => d.id !== id));
         flash("✅ ลบวันหยุดสำเร็จ");
       }
-    } catch {
-      flash("❌ เกิดข้อผิดพลาด");
-    }
+    } catch { flash("❌ เกิดข้อผิดพลาด"); }
   }
 
   // Calendar
@@ -813,36 +604,23 @@ function HolidaysTab({
   const calEnd = endOfWeek(monthEnd, { weekStartsOn: 0 });
   const calDays: Date[] = [];
   let d = calStart;
-  while (d <= calEnd) {
-    calDays.push(d);
-    d = addDays(d, 1);
-  }
+  while (d <= calEnd) { calDays.push(d); d = addDays(d, 1); }
 
   return (
     <div className="space-y-4">
       {/* Calendar picker */}
       <div className="rounded-lg border border-border-light bg-primary-mid p-4">
-        <div className="mb-3 text-xs font-medium text-text-muted">
-          คลิกวันที่เพื่อเพิ่มวันหยุด
-        </div>
+        <div className="mb-3 text-xs font-medium text-text-muted">คลิกวันที่เพื่อเพิ่มวันหยุด</div>
 
         {/* Month nav */}
         <div className="mb-3 flex items-center justify-between">
-          <button
-            type="button"
-            onClick={() => setCalMonth(subMonths(calMonth, 1))}
-            className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-primary-light hover:text-text-heading"
-          >
+          <button type="button" onClick={() => setCalMonth(subMonths(calMonth, 1))} className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-primary-light hover:text-text-heading">
             <ChevronLeft className="h-4 w-4" />
           </button>
           <span className="text-sm font-medium text-text-heading">
             {format(calMonth, "MMMM yyyy", { locale: th })}
           </span>
-          <button
-            type="button"
-            onClick={() => setCalMonth(addMonths(calMonth, 1))}
-            className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-primary-light hover:text-text-heading"
-          >
+          <button type="button" onClick={() => setCalMonth(addMonths(calMonth, 1))} className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-primary-light hover:text-text-heading">
             <ChevronRight className="h-4 w-4" />
           </button>
         </div>
@@ -850,12 +628,7 @@ function HolidaysTab({
         {/* Day labels */}
         <div className="mb-1 grid grid-cols-7 text-center">
           {["อา.", "จ.", "อ.", "พ.", "พฤ.", "ศ.", "ส."].map((l) => (
-            <div
-              key={l}
-              className="py-1 text-[10px] font-medium text-text-muted"
-            >
-              {l}
-            </div>
+            <div key={l} className="py-1 text-[10px] font-medium text-text-muted">{l}</div>
           ))}
         </div>
 
@@ -899,53 +672,29 @@ function HolidaysTab({
 
         <div className="mt-3 flex items-center gap-4 text-[10px] text-text-muted">
           <span className="flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-sm bg-status-cancelled/15 ring-1 ring-status-cancelled/30" />{" "}
-            วันหยุด (คลิกเพื่อลบ)
+            <span className="h-2.5 w-2.5 rounded-sm bg-status-cancelled/15 ring-1 ring-status-cancelled/30" /> วันหยุด (คลิกเพื่อลบ)
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-sm ring-1 ring-text-subtle/30" />{" "}
-            คลิกเพื่อเพิ่ม
+            <span className="h-2.5 w-2.5 rounded-sm ring-1 ring-text-subtle/30" /> คลิกเพื่อเพิ่ม
           </span>
         </div>
       </div>
 
       {/* Manual add with reason */}
       <div className="rounded-lg border border-border-light bg-primary-mid p-4 space-y-3">
-        <div className="text-xs font-medium text-text-muted">
-          เพิ่มพร้อมเหตุผล
-        </div>
+        <div className="text-xs font-medium text-text-muted">เพิ่มพร้อมเหตุผล</div>
         <div className="grid grid-cols-2 gap-2">
           <div>
             <label className="input-label">วันที่</label>
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              className="input-field text-xs"
-            />
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="input-field text-xs" />
           </div>
           <div>
             <label className="input-label">เหตุผล</label>
-            <input
-              type="text"
-              placeholder="เช่น วันสงกรานต์"
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              className="input-field text-xs"
-            />
+            <input type="text" placeholder="เช่น วันสงกรานต์" value={reason} onChange={(e) => setReason(e.target.value)} className="input-field text-xs" />
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => handleAdd()}
-          disabled={adding || !date}
-          className="btn-primary text-sm disabled:opacity-50"
-        >
-          {adding ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Plus className="h-4 w-4" />
-          )}
+        <button type="button" onClick={() => handleAdd()} disabled={adding || !date} className="btn-primary text-sm disabled:opacity-50">
+          {adding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
           เพิ่มวันหยุด
         </button>
       </div>
@@ -958,28 +707,17 @@ function HolidaysTab({
       ) : (
         <div className="space-y-2">
           {dates.map((dd) => (
-            <div
-              key={dd.id}
-              className="flex items-center justify-between rounded-lg border border-border-light bg-primary-mid p-4"
-            >
+            <div key={dd.id} className="flex items-center justify-between rounded-lg border border-border-light bg-primary-mid p-4">
               <div className="flex items-center gap-3">
                 <CalendarOff className="h-4 w-4 text-status-cancelled" />
                 <div>
                   <div className="text-sm font-medium text-text-heading">
-                    {format(new Date(dd.date), "EEEE d MMMM yyyy", {
-                      locale: th,
-                    })}
+                    {format(new Date(dd.date), "EEEE d MMMM yyyy", { locale: th })}
                   </div>
-                  {dd.reason && (
-                    <div className="text-xs text-text-muted">{dd.reason}</div>
-                  )}
+                  {dd.reason && <div className="text-xs text-text-muted">{dd.reason}</div>}
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => handleDelete(dd.id)}
-                className="text-text-muted hover:text-status-cancelled"
-              >
+              <button type="button" onClick={() => handleDelete(dd.id)} className="text-text-muted hover:text-status-cancelled">
                 <Trash2 className="h-4 w-4" />
               </button>
             </div>
@@ -1058,17 +796,8 @@ function ChangePasswordSection({ flash }: { flash: (m: string) => void }) {
               className="input-inner"
               autoComplete="current-password"
             />
-            <button
-              type="button"
-              onClick={() => setShowCurrent(!showCurrent)}
-              className="shrink-0 text-text-muted hover:text-text-heading"
-              tabIndex={-1}
-            >
-              {showCurrent ? (
-                <EyeOff className="h-4 w-4" />
-              ) : (
-                <Eye className="h-4 w-4" />
-              )}
+            <button type="button" onClick={() => setShowCurrent(!showCurrent)} className="shrink-0 text-text-muted hover:text-text-heading" tabIndex={-1}>
+              {showCurrent ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
           </div>
         </div>
@@ -1085,17 +814,8 @@ function ChangePasswordSection({ flash }: { flash: (m: string) => void }) {
               className="input-inner"
               autoComplete="new-password"
             />
-            <button
-              type="button"
-              onClick={() => setShowNew(!showNew)}
-              className="shrink-0 text-text-muted hover:text-text-heading"
-              tabIndex={-1}
-            >
-              {showNew ? (
-                <EyeOff className="h-4 w-4" />
-              ) : (
-                <Eye className="h-4 w-4" />
-              )}
+            <button type="button" onClick={() => setShowNew(!showNew)} className="shrink-0 text-text-muted hover:text-text-heading" tabIndex={-1}>
+              {showNew ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
           </div>
         </div>
@@ -1115,17 +835,8 @@ function ChangePasswordSection({ flash }: { flash: (m: string) => void }) {
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={handleSubmit}
-          disabled={saving}
-          className="btn-primary text-sm disabled:opacity-50"
-        >
-          {saving ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Lock className="h-4 w-4" />
-          )}
+        <button type="button" onClick={handleSubmit} disabled={saving} className="btn-primary text-sm disabled:opacity-50">
+          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lock className="h-4 w-4" />}
           เปลี่ยนรหัสผ่าน
         </button>
       </div>
@@ -1158,9 +869,7 @@ const SAMPLE_DATA: Record<string, string> = {
 };
 
 function NotificationsTab({
-  templates,
-  setTemplates,
-  flash,
+  templates, setTemplates, flash,
 }: {
   templates: NotificationTemplate[];
   setTemplates: (t: NotificationTemplate[]) => void;
@@ -1185,10 +894,7 @@ function NotificationsTab({
   function getPreview(template: string): string {
     let result = template;
     for (const [key, value] of Object.entries(SAMPLE_DATA)) {
-      result = result.replace(
-        new RegExp(key.replace(/[{}]/g, "\\$&"), "g"),
-        value,
-      );
+      result = result.replace(new RegExp(key.replace(/[{}]/g, "\\$&"), "g"), value);
     }
     return result;
   }
@@ -1201,20 +907,12 @@ function NotificationsTab({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id, template: editValue }),
       });
-      if (!res.ok) {
-        flash("❌ บันทึกไม่สำเร็จ");
-        return;
-      }
-      setTemplates(
-        templates.map((t) => (t.id === id ? { ...t, template: editValue } : t)),
-      );
+      if (!res.ok) { flash("❌ บันทึกไม่สำเร็จ"); return; }
+      setTemplates(templates.map((t) => t.id === id ? { ...t, template: editValue } : t));
       setEditingId(null);
       flash("✅ บันทึกข้อความสำเร็จ");
-    } catch {
-      flash("❌ เกิดข้อผิดพลาด");
-    } finally {
-      setSaving(false);
-    }
+    } catch { flash("❌ เกิดข้อผิดพลาด"); }
+    finally { setSaving(false); }
   }
 
   async function toggleActive(tmpl: NotificationTemplate) {
@@ -1225,14 +923,8 @@ function NotificationsTab({
         body: JSON.stringify({ id: tmpl.id, active: !tmpl.active }),
       });
       if (res.ok) {
-        setTemplates(
-          templates.map((t) =>
-            t.id === tmpl.id ? { ...t, active: !t.active } : t,
-          ),
-        );
-        flash(
-          `✅ ${!tmpl.active ? "เปิด" : "ปิด"}การแจ้งเตือน ${TRIGGER_LABELS[tmpl.trigger]}`,
-        );
+        setTemplates(templates.map((t) => t.id === tmpl.id ? { ...t, active: !t.active } : t));
+        flash(`✅ ${!tmpl.active ? "เปิด" : "ปิด"}การแจ้งเตือน ${TRIGGER_LABELS[tmpl.trigger]}`);
       }
     } catch {}
   }
@@ -1248,10 +940,7 @@ function NotificationsTab({
         const isPreviewing = previewId === tmpl.id;
 
         return (
-          <div
-            key={tmpl.id}
-            className={`rounded-lg border border-border-light bg-primary-mid p-5 ${!tmpl.active ? "opacity-50" : ""}`}
-          >
+          <div key={tmpl.id} className={`rounded-lg border border-border-light bg-primary-mid p-5 ${!tmpl.active ? "opacity-50" : ""}`}>
             {/* Header */}
             <div className="mb-3 flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -1261,11 +950,10 @@ function NotificationsTab({
                 </span>
               </div>
               <button type="button" onClick={() => toggleActive(tmpl)}>
-                {tmpl.active ? (
-                  <ToggleRight className="h-5 w-5 text-accent" />
-                ) : (
-                  <ToggleLeft className="h-5 w-5 text-text-muted" />
-                )}
+                {tmpl.active
+                  ? <ToggleRight className="h-5 w-5 text-accent" />
+                  : <ToggleLeft className="h-5 w-5 text-text-muted" />
+                }
               </button>
             </div>
 
@@ -1273,9 +961,7 @@ function NotificationsTab({
               <div className="space-y-3">
                 {/* Placeholder buttons */}
                 <div>
-                  <div className="mb-1.5 text-[10px] text-text-muted">
-                    คลิกเพื่อแทรกข้อมูล:
-                  </div>
+                  <div className="mb-1.5 text-[10px] text-text-muted">คลิกเพื่อแทรกข้อมูล:</div>
                   <div className="flex flex-wrap gap-1.5">
                     {PLACEHOLDERS.map((p) => (
                       <button
@@ -1316,24 +1002,11 @@ function NotificationsTab({
 
                 {/* Actions */}
                 <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleSave(tmpl.id)}
-                    disabled={saving}
-                    className="btn-primary text-sm disabled:opacity-50"
-                  >
-                    {saving ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Save className="h-4 w-4" />
-                    )}
+                  <button type="button" onClick={() => handleSave(tmpl.id)} disabled={saving} className="btn-primary text-sm disabled:opacity-50">
+                    {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                     บันทึก
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => setEditingId(null)}
-                    className="btn-ghost text-sm"
-                  >
+                  <button type="button" onClick={() => setEditingId(null)} className="btn-ghost text-sm">
                     ยกเลิก
                   </button>
                 </div>
