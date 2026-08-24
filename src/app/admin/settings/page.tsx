@@ -18,6 +18,7 @@ import {
   EyeOff,
   MessageSquare,
   Save,
+  Pencil,
 } from "lucide-react";
 import {
   format,
@@ -210,6 +211,49 @@ function ServicesTab({
   const [desc, setDesc] = useState("");
   const [adding, setAdding] = useState(false);
   const [processing, setProcessing] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editDesc, setEditDesc] = useState("");
+
+  function startEdit(service: Service) {
+    setEditingId(service.id);
+    setEditName(service.name);
+    setEditDesc(service.description || "");
+  }
+
+  async function handleSaveEdit(id: string) {
+    if (!editName.trim()) return;
+    setProcessing(id);
+    try {
+      const res = await fetch("/api/admin/services", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, name: editName, description: editDesc }),
+      });
+      if (!res.ok) {
+        const d = await res.json();
+        flash(`❌ ${d.error}`);
+        return;
+      }
+      setServices(
+        services.map((s) =>
+          s.id === id
+            ? {
+                ...s,
+                name: editName.trim(),
+                description: editDesc.trim() || null,
+              }
+            : s,
+        ),
+      );
+      setEditingId(null);
+      flash("✅ แก้ไขบริการสำเร็จ");
+    } catch {
+      flash("❌ เกิดข้อผิดพลาด");
+    } finally {
+      setProcessing("");
+    }
+  }
 
   async function handleAdd() {
     if (!name.trim()) return;
@@ -324,47 +368,99 @@ function ServicesTab({
       <div className="space-y-2">
         {services.map((service) => {
           const isProcessing = processing === service.id;
+          const isEditing = editingId === service.id;
+
           return (
             <div
               key={service.id}
-              className={`relative flex items-center gap-3 rounded-lg border border-border-light bg-primary-mid p-4 ${!service.active ? "opacity-50" : ""}`}
+              className={`relative rounded-lg border border-border-light bg-primary-mid p-4 ${!service.active ? "opacity-50" : ""}`}
             >
               {isProcessing && (
                 <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-primary-mid/90">
                   <Loader2 className="h-5 w-5 animate-spin text-accent" />
                 </div>
               )}
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium text-text-heading">
-                  {service.name}
-                </div>
-                {service.description && (
-                  <div className="text-xs text-text-muted mt-0.5">
-                    {service.description}
+
+              {isEditing ? (
+                <div className="space-y-2">
+                  <input
+                    type="text"
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    className="input-field text-sm"
+                    placeholder="ชื่อบริการ"
+                  />
+                  <input
+                    type="text"
+                    value={editDesc}
+                    onChange={(e) => setEditDesc(e.target.value)}
+                    className="input-field text-xs"
+                    placeholder="รายละเอียด (ไม่บังคับ)"
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleSaveEdit(service.id)}
+                      disabled={!editName.trim()}
+                      className="btn-primary text-xs disabled:opacity-50"
+                    >
+                      <Save className="h-3.5 w-3.5" />
+                      บันทึก
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditingId(null)}
+                      className="btn-ghost text-xs"
+                    >
+                      ยกเลิก
+                    </button>
                   </div>
-                )}
-              </div>
-              <button
-                type="button"
-                onClick={() => toggleActive(service)}
-                disabled={isProcessing}
-                className="text-text-muted hover:text-accent"
-                title={service.active ? "ปิดการใช้งาน" : "เปิดการใช้งาน"}
-              >
-                {service.active ? (
-                  <ToggleRight className="h-5 w-5 text-accent" />
-                ) : (
-                  <ToggleLeft className="h-5 w-5" />
-                )}
-              </button>
-              <button
-                type="button"
-                onClick={() => handleDelete(service)}
-                disabled={isProcessing}
-                className="text-text-muted hover:text-status-cancelled"
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium text-text-heading">
+                      {service.name}
+                    </div>
+                    {service.description && (
+                      <div className="text-xs text-text-muted mt-0.5">
+                        {service.description}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => startEdit(service)}
+                    disabled={isProcessing}
+                    className="text-text-muted hover:text-accent"
+                    title="แก้ไข"
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => toggleActive(service)}
+                    disabled={isProcessing}
+                    className="text-text-muted hover:text-accent"
+                    title={service.active ? "ปิดการใช้งาน" : "เปิดการใช้งาน"}
+                  >
+                    {service.active ? (
+                      <ToggleRight className="h-5 w-5 text-accent" />
+                    ) : (
+                      <ToggleLeft className="h-5 w-5" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDelete(service)}
+                    disabled={isProcessing}
+                    className="text-text-muted hover:text-status-cancelled"
+                    title="ลบ"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              )}
             </div>
           );
         })}
