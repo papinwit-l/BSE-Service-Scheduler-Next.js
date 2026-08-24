@@ -9,7 +9,10 @@ export async function POST(request: NextRequest) {
   try {
     // ─── Security: Origin validation ───
     if (!isValidOrigin(request.headers)) {
-      return NextResponse.json({ error: "คำขอไม่ถูกต้อง" }, { status: 403 });
+      return NextResponse.json(
+        { error: "คำขอไม่ถูกต้อง" },
+        { status: 403 }
+      );
     }
 
     // ─── Security: Rate limiting (5 bookings per IP per hour) ───
@@ -17,7 +20,7 @@ export async function POST(request: NextRequest) {
     const { limited, remaining, resetIn } = rateLimit(
       `booking:${clientIp}`,
       5,
-      60 * 60 * 1000, // 1 hour
+      60 * 60 * 1000 // 1 hour
     );
 
     if (limited) {
@@ -27,7 +30,7 @@ export async function POST(request: NextRequest) {
         {
           status: 429,
           headers: { "Retry-After": retryAfter.toString() },
-        },
+        }
       );
     }
 
@@ -38,7 +41,7 @@ export async function POST(request: NextRequest) {
       // Return fake success to not tip off the bot
       return NextResponse.json(
         { bookingCode: "BK-000000", id: "fake", status: "PENDING" },
-        { status: 201 },
+        { status: 201 }
       );
     }
 
@@ -52,15 +55,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ errors }, { status: 400 });
     }
 
-    const {
-      customerName: rawName,
-      customerPhone: rawPhone,
-      licensePlate: rawPlate,
-      date,
-      timeBlockId,
-      serviceIds,
-      notes: rawNotes,
-    } = result.data;
+    const { customerName: rawName, customerPhone: rawPhone, licensePlate: rawPlate, mileage, date, timeBlockId, serviceIds, notes: rawNotes } =
+      result.data;
 
     // ─── Security: Sanitize user input ───
     const customerName = sanitize(rawName);
@@ -79,7 +75,7 @@ export async function POST(request: NextRequest) {
     if (dayConfig?.isClosed) {
       return NextResponse.json(
         { error: "วันที่เลือกเป็นวันหยุด" },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -90,7 +86,7 @@ export async function POST(request: NextRequest) {
     if (closedDate) {
       return NextResponse.json(
         { error: `วันที่เลือกเป็นวันหยุด: ${closedDate.reason || ""}` },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -102,7 +98,7 @@ export async function POST(request: NextRequest) {
     if (!timeBlock || !timeBlock.active) {
       return NextResponse.json(
         { error: "ช่วงเวลาที่เลือกไม่พร้อมให้บริการ" },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -117,7 +113,7 @@ export async function POST(request: NextRequest) {
     if (currentBookings >= timeBlock.maxBookings) {
       return NextResponse.json(
         { error: "ช่วงเวลาที่เลือกเต็มแล้ว" },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -129,7 +125,7 @@ export async function POST(request: NextRequest) {
     if (services.length !== serviceIds.length) {
       return NextResponse.json(
         { error: "บริการบางรายการไม่พร้อมให้บริการ" },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -152,6 +148,7 @@ export async function POST(request: NextRequest) {
         customerName,
         customerPhone,
         licensePlate,
+        mileage,
         date: bookingDate,
         timeBlockId,
         notes: notes || null,
@@ -173,12 +170,12 @@ export async function POST(request: NextRequest) {
         id: booking.id,
         status: booking.status,
       },
-      { status: 201 },
+      { status: 201 }
     );
   } catch {
     return NextResponse.json(
       { error: "ไม่สามารถสร้างการจองได้ กรุณาลองใหม่" },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }

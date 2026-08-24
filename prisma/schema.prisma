@@ -75,6 +75,7 @@ model Booking {
   customerName  String        @map("customer_name") @db.VarChar(100)
   customerPhone String        @map("customer_phone") @db.VarChar(20)
   licensePlate  String        @map("license_plate") @db.VarChar(20)
+  mileage       Int
   date          DateTime      @db.Date
   timeBlockId   String        @map("time_block_id") @db.VarChar(30)
   status        BookingStatus @default(PENDING)

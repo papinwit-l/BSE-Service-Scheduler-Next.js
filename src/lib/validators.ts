@@ -12,6 +12,11 @@ export const bookingSchema = z.object({
     .string()
     .min(2, "กรุณากรอกทะเบียนรถ")
     .max(20, "ทะเบียนรถยาวเกินไป"),
+  mileage: z
+    .number({ error: "กรุณากรอกเลขกิโลเมตร" })
+    .int("เลขกิโลเมตรต้องเป็นจำนวนเต็ม")
+    .min(0, "เลขกิโลเมตรไม่ถูกต้อง")
+    .max(999999, "เลขกิโลเมตรไม่ถูกต้อง"),
   date: z.string().min(1, "กรุณาเลือกวันนัดหมาย"),
   timeBlockId: z.string().min(1, "กรุณาเลือกช่วงเวลา"),
   serviceIds: z

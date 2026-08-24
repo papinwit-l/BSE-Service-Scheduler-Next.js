@@ -45,6 +45,7 @@ export default function BookingPage() {
     customerName: "",
     customerPhone: "",
     licensePlate: "",
+    mileage: "",
     notes: "",
   });
   const [honeypot, setHoneypot] = useState("");
@@ -68,7 +69,9 @@ export default function BookingPage() {
         setServices(servicesData);
         setClosedDays(configData.closedDays || []);
         setClosedDates(
-          (configData.closedDates || []).map((d: { date: string }) => d.date),
+          (configData.closedDates || []).map(
+            (d: { date: string }) => d.date
+          )
         );
       } catch {
         setSubmitError("ไม่สามารถโหลดข้อมูลได้ กรุณารีเฟรชหน้า");
@@ -150,6 +153,11 @@ export default function BookingPage() {
     if (!customerFields.licensePlate.trim()) {
       newErrors.licensePlate = "กรุณากรอกทะเบียนรถ";
     }
+    if (!customerFields.mileage.trim()) {
+      newErrors.mileage = "กรุณากรอกเลขกิโลเมตร";
+    } else if (isNaN(Number(customerFields.mileage)) || Number(customerFields.mileage) < 0) {
+      newErrors.mileage = "เลขกิโลเมตรไม่ถูกต้อง";
+    }
 
     if (Object.keys(newErrors).length > 0) {
       setErrors(newErrors);
@@ -170,7 +178,8 @@ export default function BookingPage() {
           date: selectedDate,
           timeBlockId: selectedTimeBlock,
           ...customerFields,
-          _website: honeypot, // honeypot — bots fill this, humans don't see it
+          mileage: parseInt(customerFields.mileage),
+          _website: honeypot,
         }),
       });
 
@@ -179,9 +188,11 @@ export default function BookingPage() {
       if (!res.ok) {
         if (data.errors) {
           const fieldErrors: Record<string, string> = {};
-          data.errors.forEach((e: { field: string; message: string }) => {
-            fieldErrors[e.field] = e.message;
-          });
+          data.errors.forEach(
+            (e: { field: string; message: string }) => {
+              fieldErrors[e.field] = e.message;
+            }
+          );
           setErrors(fieldErrors);
         } else {
           setSubmitError(data.error || "เกิดข้อผิดพลาด กรุณาลองใหม่");
@@ -312,10 +323,7 @@ export default function BookingPage() {
             <div className="hr-gradient" />
 
             {/* Honeypot — hidden from humans, bots fill it */}
-            <div
-              className="absolute -left-[9999px] opacity-0"
-              aria-hidden="true"
-            >
+            <div className="absolute -left-[9999px] opacity-0" aria-hidden="true">
               <label htmlFor="_website">Website</label>
               <input
                 id="_website"

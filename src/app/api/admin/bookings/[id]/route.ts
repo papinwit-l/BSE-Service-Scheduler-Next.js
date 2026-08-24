@@ -5,7 +5,7 @@ import { sendStatusUpdate } from "@/lib/line";
 
 export async function GET(
   _request: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await auth();
   if (!session) {
@@ -28,7 +28,10 @@ export async function GET(
     });
 
     if (!booking) {
-      return NextResponse.json({ error: "ไม่พบรายการจอง" }, { status: 404 });
+      return NextResponse.json(
+        { error: "ไม่พบรายการจอง" },
+        { status: 404 }
+      );
     }
 
     return NextResponse.json({
@@ -37,6 +40,7 @@ export async function GET(
       customerName: booking.customerName,
       customerPhone: booking.customerPhone,
       licensePlate: booking.licensePlate,
+      mileage: booking.mileage,
       date: booking.date.toISOString().split("T")[0],
       status: booking.status,
       lineUserId: booking.lineUserId,
@@ -55,14 +59,14 @@ export async function GET(
   } catch {
     return NextResponse.json(
       { error: "ไม่สามารถโหลดข้อมูลได้" },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await auth();
   if (!session) {
@@ -76,7 +80,10 @@ export async function PATCH(
 
     const validStatuses = ["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED"];
     if (!validStatuses.includes(status)) {
-      return NextResponse.json({ error: "สถานะไม่ถูกต้อง" }, { status: 400 });
+      return NextResponse.json(
+        { error: "สถานะไม่ถูกต้อง" },
+        { status: 400 }
+      );
     }
 
     const booking = await prisma.booking.update({
@@ -110,7 +117,7 @@ export async function PATCH(
   } catch {
     return NextResponse.json(
       { error: "ไม่สามารถอัปเดตสถานะได้" },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }

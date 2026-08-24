@@ -19,6 +19,7 @@ import {
   Send,
   Bell,
   CalendarClock,
+  Gauge,
 } from "lucide-react";
 import { format } from "date-fns";
 import { th } from "date-fns/locale";
@@ -29,6 +30,7 @@ type BookingDetail = {
   customerName: string;
   customerPhone: string;
   licensePlate: string;
+  mileage: number;
   date: string;
   status: string;
   lineUserId: string | null;
@@ -65,10 +67,7 @@ const STATUS_CONFIG: Record<
   },
 };
 
-const STATUS_ACTIONS: Record<
-  string,
-  { label: string; to: string; variant: string }[]
-> = {
+const STATUS_ACTIONS: Record<string, { label: string; to: string; variant: string }[]> = {
   PENDING: [
     { label: "ยืนยัน", to: "CONFIRMED", variant: "btn-primary" },
     { label: "ยกเลิก", to: "CANCELLED", variant: "btn-cancel" },
@@ -280,12 +279,8 @@ export default function AdminBookingDetailPage() {
                   onChange={(e) => setSendNotify(e.target.checked)}
                   className="sr-only"
                 />
-                <span
-                  className={`flex h-5 w-9 items-center rounded-full transition-colors ${sendNotify ? "bg-accent" : "bg-border"}`}
-                >
-                  <span
-                    className={`h-3.5 w-3.5 rounded-full bg-white transition-transform ${sendNotify ? "translate-x-4.5" : "translate-x-0.5"}`}
-                  />
+                <span className={`flex h-5 w-9 items-center rounded-full transition-colors ${sendNotify ? "bg-accent" : "bg-border"}`}>
+                  <span className={`h-3.5 w-3.5 rounded-full bg-white transition-transform ${sendNotify ? "translate-x-4.5" : "translate-x-0.5"}`} />
                 </span>
                 แจ้งเตือน LINE
               </label>
@@ -318,17 +313,9 @@ export default function AdminBookingDetailPage() {
           </h2>
           <div className="space-y-4">
             <DetailRow icon={User} label="ชื่อ" value={booking.customerName} />
-            <DetailRow
-              icon={Phone}
-              label="เบอร์โทร"
-              value={booking.customerPhone}
-            />
-            <DetailRow
-              icon={Car}
-              label="ทะเบียนรถ"
-              value={booking.licensePlate}
-              mono
-            />
+            <DetailRow icon={Phone} label="เบอร์โทร" value={booking.customerPhone} />
+            <DetailRow icon={Car} label="ทะเบียนรถ" value={booking.licensePlate} mono />
+            <DetailRow icon={Gauge} label="เลขกิโลเมตร" value={`${booking.mileage.toLocaleString()} กม.`} mono />
           </div>
         </div>
 
@@ -341,9 +328,7 @@ export default function AdminBookingDetailPage() {
             <DetailRow
               icon={Calendar}
               label="วันที่"
-              value={format(new Date(booking.date), "EEEE d MMMM yyyy", {
-                locale: th,
-              })}
+              value={format(new Date(booking.date), "EEEE d MMMM yyyy", { locale: th })}
             />
             <DetailRow
               icon={Clock}
@@ -392,12 +377,8 @@ export default function AdminBookingDetailPage() {
         </h2>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div
-              className={`flex h-8 w-8 items-center justify-center rounded-full ${booking.lineUserId ? "bg-status-completed/10" : "bg-primary-light"}`}
-            >
-              <MessageCircle
-                className={`h-4 w-4 ${booking.lineUserId ? "text-status-completed" : "text-text-subtle"}`}
-              />
+            <div className={`flex h-8 w-8 items-center justify-center rounded-full ${booking.lineUserId ? "bg-status-completed/10" : "bg-primary-light"}`}>
+              <MessageCircle className={`h-4 w-4 ${booking.lineUserId ? "text-status-completed" : "text-text-subtle"}`} />
             </div>
             <div>
               <div className="text-sm font-medium text-text-heading">
@@ -447,15 +428,11 @@ export default function AdminBookingDetailPage() {
       {/* Timestamps */}
       <div className="text-center text-xs text-text-subtle">
         สร้างเมื่อ{" "}
-        {format(new Date(booking.createdAt), "d MMM yyyy HH:mm", {
-          locale: th,
-        })}
+        {format(new Date(booking.createdAt), "d MMM yyyy HH:mm", { locale: th })}
         {booking.updatedAt !== booking.createdAt && (
           <>
             {" · "}อัปเดต{" "}
-            {format(new Date(booking.updatedAt), "d MMM yyyy HH:mm", {
-              locale: th,
-            })}
+            {format(new Date(booking.updatedAt), "d MMM yyyy HH:mm", { locale: th })}
           </>
         )}
       </div>
