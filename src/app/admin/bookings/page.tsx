@@ -1,17 +1,20 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import {
   Search,
   Loader2,
   ChevronRight,
   ChevronLeft,
+  ChevronDown,
   Car,
   Wrench,
-  Clock,
   Filter,
   CalendarCheck,
+  ArrowUp,
+  ArrowDown,
+  Check,
 } from "lucide-react";
 import { format } from "date-fns";
 import { th } from "date-fns/locale";
@@ -29,12 +32,26 @@ type Booking = {
   services: string[];
 };
 
+type SortField = "date" | "createdAt";
+type SortDirection = "asc" | "desc";
+
 const STATUS_FILTERS = [
   { value: "ALL", label: "ทั้งหมด" },
   { value: "PENDING", label: "รอดำเนินการ" },
   { value: "CONFIRMED", label: "ยืนยันแล้ว" },
   { value: "COMPLETED", label: "เสร็จสิ้น" },
   { value: "CANCELLED", label: "ยกเลิก" },
+];
+
+const SORT_OPTIONS: {
+  field: SortField;
+  direction: SortDirection;
+  label: string;
+}[] = [
+  { field: "date", direction: "asc", label: "วันนัด — ใกล้ที่สุดก่อน" },
+  { field: "date", direction: "desc", label: "วันนัด — ไกลที่สุดก่อน" },
+  { field: "createdAt", direction: "desc", label: "วันที่จอง — ล่าสุดก่อน" },
+  { field: "createdAt", direction: "asc", label: "วันที่จอง — เก่าสุดก่อน" },
 ];
 
 const STATUS_BADGE: Record<string, { label: string; className: string }> = {
@@ -50,9 +67,36 @@ export default function AdminBookingsPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [dateFilter, setDateFilter] = useState("");
+  const [upcomingOnly, setUpcomingOnly] = useState(false);
+  const [sortField, setSortField] = useState<SortField>("date");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+  const [sortOpen, setSortOpen] = useState(false);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
+
+  const sortRef = useRef<HTMLDivElement>(null);
+
+  // Close sort dropdown on outside click / Escape
+  useEffect(() => {
+    if (!sortOpen) return;
+
+    const onClick = (e: MouseEvent) => {
+      if (sortRef.current && !sortRef.current.contains(e.target as Node)) {
+        setSortOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSortOpen(false);
+    };
+
+    document.addEventListener("mousedown", onClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [sortOpen]);
 
   const fetchBookings = useCallback(async () => {
     setLoading(true);
@@ -60,6 +104,9 @@ export default function AdminBookingsPage() {
     if (search) params.set("search", search);
     if (statusFilter !== "ALL") params.set("status", statusFilter);
     if (dateFilter) params.set("date", dateFilter);
+    if (upcomingOnly) params.set("upcoming", "1");
+    params.set("sortBy", sortField);
+    params.set("sortDir", sortDirection);
     params.set("page", page.toString());
 
     try {
@@ -73,16 +120,38 @@ export default function AdminBookingsPage() {
     } finally {
       setLoading(false);
     }
-  }, [search, statusFilter, dateFilter, page]);
+  }, [
+    search,
+    statusFilter,
+    dateFilter,
+    upcomingOnly,
+    sortField,
+    sortDirection,
+    page,
+  ]);
 
   useEffect(() => {
     fetchBookings();
   }, [fetchBookings]);
 
-  // Reset page when filters change
+  // Reset page when filters or sort change
   useEffect(() => {
     setPage(1);
-  }, [search, statusFilter, dateFilter]);
+  }, [
+    search,
+    statusFilter,
+    dateFilter,
+    upcomingOnly,
+    sortField,
+    sortDirection,
+  ]);
+
+  const activeSort =
+    SORT_OPTIONS.find(
+      (o) => o.field === sortField && o.direction === sortDirection,
+    ) ?? SORT_OPTIONS[0];
+
+  const SortArrow = sortDirection === "asc" ? ArrowUp : ArrowDown;
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
@@ -106,28 +175,29 @@ export default function AdminBookingsPage() {
           />
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
-          {/* Status filter */}
-          <div className="flex items-center gap-1.5">
-            <Filter className="h-3.5 w-3.5 text-text-muted" />
-            <div className="flex gap-1">
-              {STATUS_FILTERS.map((f) => (
-                <button
-                  key={f.value}
-                  type="button"
-                  onClick={() => setStatusFilter(f.value)}
-                  className={`rounded-md px-3 py-1.5 text-xs font-medium transition-all ${
-                    statusFilter === f.value
-                      ? "bg-accent-subtle text-accent"
-                      : "text-text-muted hover:bg-primary-light hover:text-text-heading"
-                  }`}
-                >
-                  {f.label}
-                </button>
-              ))}
-            </div>
+        {/* Status filter row */}
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Filter className="h-3.5 w-3.5 text-text-muted" />
+          <div className="flex flex-wrap gap-1">
+            {STATUS_FILTERS.map((f) => (
+              <button
+                key={f.value}
+                type="button"
+                onClick={() => setStatusFilter(f.value)}
+                className={`rounded-md px-3 py-1.5 text-xs font-medium transition-all ${
+                  statusFilter === f.value
+                    ? "bg-accent-subtle text-accent"
+                    : "text-text-muted hover:bg-primary-light hover:text-text-heading"
+                }`}
+              >
+                {f.label}
+              </button>
+            ))}
           </div>
+        </div>
 
+        {/* Date / sort / count row */}
+        <div className="flex flex-wrap items-center gap-3">
           {/* Date filter */}
           <input
             type="date"
@@ -145,6 +215,77 @@ export default function AdminBookingsPage() {
               ล้างวันที่
             </button>
           )}
+
+          {/* Upcoming only */}
+          <button
+            type="button"
+            onClick={() => setUpcomingOnly((v) => !v)}
+            aria-pressed={upcomingOnly}
+            className={`rounded-md border px-3 py-1.5 text-xs font-medium transition-all ${
+              upcomingOnly
+                ? "border-accent/40 bg-accent-subtle text-accent"
+                : "border-border-light text-text-muted hover:border-border hover:text-text-heading"
+            }`}
+          >
+            เฉพาะที่จะถึง
+          </button>
+
+          {/* Sort dropdown */}
+          <div className="relative" ref={sortRef}>
+            <button
+              type="button"
+              onClick={() => setSortOpen((v) => !v)}
+              aria-haspopup="listbox"
+              aria-expanded={sortOpen}
+              className="flex items-center gap-1.5 rounded-md border border-border-light px-3 py-1.5 text-xs font-medium text-text-muted transition-all hover:border-border hover:text-text-heading"
+            >
+              <SortArrow className="h-3 w-3 text-accent" />
+              {activeSort.label}
+              <ChevronDown
+                className={`h-3 w-3 transition-transform ${
+                  sortOpen ? "rotate-180" : ""
+                }`}
+              />
+            </button>
+
+            {sortOpen && (
+              <div
+                role="listbox"
+                className="absolute left-0 top-full z-20 mt-1 min-w-[220px] overflow-hidden rounded-lg border border-border-light bg-primary-mid py-1 shadow-lg"
+              >
+                {SORT_OPTIONS.map((opt) => {
+                  const isActive =
+                    opt.field === sortField && opt.direction === sortDirection;
+
+                  return (
+                    <button
+                      key={`${opt.field}-${opt.direction}`}
+                      type="button"
+                      role="option"
+                      aria-selected={isActive}
+                      onClick={() => {
+                        setSortField(opt.field);
+                        setSortDirection(opt.direction);
+                        setSortOpen(false);
+                      }}
+                      className={`flex w-full items-center gap-2 px-3 py-2 text-left text-xs transition-colors ${
+                        isActive
+                          ? "bg-accent-subtle text-accent"
+                          : "text-text-muted hover:bg-primary-light hover:text-text-heading"
+                      }`}
+                    >
+                      <Check
+                        className={`h-3 w-3 shrink-0 ${
+                          isActive ? "opacity-100" : "opacity-0"
+                        }`}
+                      />
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
 
           {/* Total count */}
           <span className="ml-auto text-xs text-text-muted">
@@ -211,6 +352,16 @@ export default function AdminBookingsPage() {
                       {booking.services.join(", ")}
                     </span>
                   </div>
+
+                  {/* Show created date when sorting by it */}
+                  {sortField === "createdAt" && (
+                    <div className="mt-1 font-mono text-[10px] text-text-subtle">
+                      จองเมื่อ{" "}
+                      {format(new Date(booking.createdAt), "d MMM yyyy HH:mm", {
+                        locale: th,
+                      })}
+                    </div>
+                  )}
                 </div>
 
                 <ChevronRight className="mt-2 h-4 w-4 shrink-0 text-text-subtle transition-colors group-hover:text-text-muted" />

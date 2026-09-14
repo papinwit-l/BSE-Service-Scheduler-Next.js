@@ -1,6 +1,48 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+
+const PAGE_SIZE = 20;
+
+// Whitelist — never pass a raw query param into orderBy
+const SORT_FIELDS = ["date", "createdAt"] as const;
+type SortField = (typeof SORT_FIELDS)[number];
+
+function parseSortField(value: string | null): SortField {
+  return SORT_FIELDS.includes(value as SortField)
+    ? (value as SortField)
+    : "date";
+}
+
+function parseSortDir(value: string | null): Prisma.SortOrder {
+  return value === "desc" ? "desc" : "asc";
+}
+
+function buildOrderBy(
+  field: SortField,
+  dir: Prisma.SortOrder,
+): Prisma.BookingOrderByWithRelationInput[] {
+  if (field === "createdAt") {
+    return [{ createdAt: dir }];
+  }
+
+  // Same-day bookings must fall back to the time block, otherwise
+  // morning and afternoon come back in arbitrary order.
+  return [
+    { date: dir },
+    { timeBlock: { startTime: dir } },
+    { createdAt: "asc" },
+  ];
+}
+
+/** Start of today in Asia/Bangkok, expressed as a UTC Date. */
+function startOfTodayBangkok(): Date {
+  const BKK_OFFSET_MS = 7 * 60 * 60 * 1000;
+  const nowBkk = new Date(Date.now() + BKK_OFFSET_MS);
+  const iso = nowBkk.toISOString().slice(0, 10); // YYYY-MM-DD in BKK
+  return new Date(`${iso}T00:00:00.000Z`);
+}
 
 export async function GET(request: NextRequest) {
   const session = await auth();
@@ -13,22 +55,46 @@ export async function GET(request: NextRequest) {
     const status = searchParams.get("status");
     const search = searchParams.get("search");
     const date = searchParams.get("date");
-    const page = parseInt(searchParams.get("page") || "1");
-    const limit = 20;
-    const skip = (page - 1) * limit;
+    const upcoming = searchParams.get("upcoming") === "1";
+
+    const sortField = parseSortField(searchParams.get("sortBy"));
+    const sortDir = parseSortDir(searchParams.get("sortDir"));
+
+    const pageParam = parseInt(searchParams.get("page") || "1", 10);
+    const page = Number.isFinite(pageParam) && pageParam > 0 ? pageParam : 1;
+    const skip = (page - 1) * PAGE_SIZE;
 
     // Build where clause
-    const where: Record<string, unknown> = {};
+    const where: Prisma.BookingWhereInput = {};
 
     if (status && status !== "ALL") {
       where.status = status;
     }
 
+    // Date filter and "upcoming only" both constrain `date`, so they're
+    // merged into one range instead of overwriting each other.
+    const dateRange: Prisma.DateTimeFilter = {};
+
     if (date) {
-      const d = new Date(date);
-      const next = new Date(d);
-      next.setDate(next.getDate() + 1);
-      where.date = { gte: d, lt: next };
+      const d = new Date(`${date}T00:00:00.000Z`);
+      if (!Number.isNaN(d.getTime())) {
+        const next = new Date(d);
+        next.setUTCDate(next.getUTCDate() + 1);
+        dateRange.gte = d;
+        dateRange.lt = next;
+      }
+    }
+
+    if (upcoming) {
+      const today = startOfTodayBangkok();
+      // Keep the tighter of the two lower bounds.
+      if (!dateRange.gte || today > (dateRange.gte as Date)) {
+        dateRange.gte = today;
+      }
+    }
+
+    if (Object.keys(dateRange).length > 0) {
+      where.date = dateRange;
     }
 
     if (search) {
@@ -53,9 +119,9 @@ export async function GET(request: NextRequest) {
             },
           },
         },
-        orderBy: [{ date: "desc" }, { createdAt: "desc" }],
+        orderBy: buildOrderBy(sortField, sortDir),
         skip,
-        take: limit,
+        take: PAGE_SIZE,
       }),
       prisma.booking.count({ where }),
     ]);
@@ -78,12 +144,14 @@ export async function GET(request: NextRequest) {
       })),
       total,
       page,
-      totalPages: Math.ceil(total / limit),
+      totalPages: Math.max(1, Math.ceil(total / PAGE_SIZE)),
+      sortBy: sortField,
+      sortDir,
     });
   } catch {
     return NextResponse.json(
       { error: "ไม่สามารถโหลดข้อมูลได้" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
