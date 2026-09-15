@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Prisma } from "@prisma/client";
+import { BookingStatus, Prisma } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
@@ -68,7 +68,9 @@ export async function GET(request: NextRequest) {
     const where: Prisma.BookingWhereInput = {};
 
     if (status && status !== "ALL") {
-      where.status = status;
+      if (Object.values(BookingStatus).includes(status as BookingStatus)) {
+        where.status = status as BookingStatus;
+      }
     }
 
     // Date filter and "upcoming only" both constrain `date`, so they're
