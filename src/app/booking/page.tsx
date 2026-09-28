@@ -22,6 +22,10 @@ export default function BookingPage() {
   const [carModels, setCarModels] = useState<CarModelOption[]>([]);
   const [loadingServices, setLoadingServices] = useState(true);
 
+  // Booking rules from settings — the form enforces the same limits as the API
+  const [maxDate, setMaxDate] = useState<string | undefined>();
+  const [requireBodyNo, setRequireBodyNo] = useState(false);
+
   // Calendar config
   const [closedDays, setClosedDays] = useState<number[]>([]);
   const [closedDates, setClosedDates] = useState<string[]>([]);
@@ -58,16 +62,21 @@ export default function BookingPage() {
   useEffect(() => {
     async function load() {
       try {
-        const [servicesRes, configRes, modelsRes] = await Promise.all([
-          fetch("/api/services"),
-          fetch("/api/day-configs"),
-          fetch("/api/car-models"),
-        ]);
+        const [servicesRes, configRes, modelsRes, bookingConfigRes] =
+          await Promise.all([
+            fetch("/api/services"),
+            fetch("/api/day-configs"),
+            fetch("/api/car-models"),
+            fetch("/api/booking-config"),
+          ]);
 
         const servicesData = await servicesRes.json();
         const configData = await configRes.json();
         const modelsData = await modelsRes.json();
+        const bookingConfig = await bookingConfigRes.json();
 
+        setMaxDate(bookingConfig.maxDate);
+        setRequireBodyNo(!!bookingConfig.requireBodyNo);
         setServices(servicesData);
         setCarModels(Array.isArray(modelsData) ? modelsData : []);
         setClosedDays(configData.closedDays || []);
@@ -114,6 +123,15 @@ export default function BookingPage() {
       })
       .finally(() => setLoadingSlots(false));
   }, [selectedDate, selectedServices]);
+
+  // React hasn't painted the error elements yet when setErrors returns, so
+  // the scroll has to wait a frame or querySelector finds nothing.
+  function scrollToFirstError() {
+    requestAnimationFrame(() => {
+      const first = document.querySelector(".field-error");
+      first?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  }
 
   function clearError(field: string) {
     setErrors((prev) => {
@@ -163,6 +181,9 @@ export default function BookingPage() {
     if (!customerFields.licensePlate.trim()) {
       newErrors.licensePlate = "กรุณากรอกทะเบียนรถ";
     }
+    if (requireBodyNo && !customerFields.bodyNo.trim()) {
+      newErrors.bodyNo = "กรุณากรอกเลขตัวถัง";
+    }
     if (!customerFields.mileage.trim()) {
       newErrors.mileage = "กรุณากรอกเลขกิโลเมตร";
     } else if (
@@ -174,8 +195,7 @@ export default function BookingPage() {
 
     if (Object.keys(newErrors).length > 0) {
       setErrors(newErrors);
-      const firstErrorField = document.querySelector(".field-error");
-      firstErrorField?.scrollIntoView({ behavior: "smooth", block: "center" });
+      scrollToFirstError();
       return;
     }
 
@@ -212,6 +232,7 @@ export default function BookingPage() {
             fieldErrors[e.field] = e.message;
           });
           setErrors(fieldErrors);
+          scrollToFirstError();
         } else {
           setSubmitError(data.error || "เกิดข้อผิดพลาด กรุณาลองใหม่");
 
@@ -296,6 +317,7 @@ export default function BookingPage() {
                   }}
                   closedDays={closedDays}
                   closedDates={closedDates}
+                  maxDate={maxDate}
                   error={errors.date}
                 />
                 <TimeSlotPicker
@@ -325,6 +347,7 @@ export default function BookingPage() {
                 <CustomerForm
                   values={customerFields}
                   carModels={carModels}
+                  requireBodyNo={requireBodyNo}
                   onChange={handleCustomerChange}
                   errors={errors}
                 />

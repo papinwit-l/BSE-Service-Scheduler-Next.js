@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import {
   format,
@@ -23,6 +23,8 @@ type Props = {
   onChange: (date: string) => void;
   closedDays: number[]; // [0] = Sunday
   closedDates: string[]; // ["2026-01-01"]
+  /** Last bookable date, YYYY-MM-DD — from booking_max_days. */
+  maxDate?: string;
   error?: string;
 };
 
@@ -33,9 +35,12 @@ export default function DatePicker({
   onChange,
   closedDays,
   closedDates,
+  maxDate,
   error,
 }: Props) {
-  const [currentMonth, setCurrentMonth] = useState(() => startOfMonth(new Date()));
+  const [currentMonth, setCurrentMonth] = useState(() =>
+    startOfMonth(new Date()),
+  );
   const today = startOfDay(new Date());
   const selectedDate = value ? new Date(value) : null;
 
@@ -44,7 +49,6 @@ export default function DatePicker({
   const calendarStart = startOfWeek(monthStart, { weekStartsOn: 0 });
   const calendarEnd = endOfWeek(monthEnd, { weekStartsOn: 0 });
 
-  // Build calendar days
   const days: Date[] = [];
   let day = calendarStart;
   while (day <= calendarEnd) {
@@ -53,13 +57,16 @@ export default function DatePicker({
   }
 
   function isDisabled(date: Date): boolean {
-    // Past dates
     if (isBefore(date, today)) return true;
-    // Weekly closed days
-    if (closedDays.includes(date.getDay())) return true;
-    // Specific closed dates
+
     const dateStr = format(date, "yyyy-MM-dd");
+
+    // Beyond the booking window — string compare is safe for ISO dates
+    if (maxDate && dateStr > maxDate) return true;
+
+    if (closedDays.includes(date.getDay())) return true;
     if (closedDates.includes(dateStr)) return true;
+
     return false;
   }
 
@@ -71,6 +78,11 @@ export default function DatePicker({
 
   const canGoPrev = !isBefore(subMonths(currentMonth, 1), startOfMonth(today));
 
+  // Don't page past the last month that contains a bookable date
+  const canGoNext =
+    !maxDate ||
+    format(addMonths(currentMonth, 1), "yyyy-MM") <= maxDate.slice(0, 7);
+
   return (
     <div>
       <label className="input-label mb-3 text-sm">วันนัดหมาย</label>
@@ -79,7 +91,10 @@ export default function DatePicker({
         <div className="mb-4 flex items-center justify-between">
           <button
             type="button"
-            onClick={() => canGoPrev && setCurrentMonth(subMonths(currentMonth, 1))}
+            onClick={() =>
+              canGoPrev && setCurrentMonth(subMonths(currentMonth, 1))
+            }
+            disabled={!canGoPrev}
             className={`flex h-8 w-8 items-center justify-center rounded-md transition-colors ${
               canGoPrev
                 ? "text-text-muted hover:bg-primary-light hover:text-text-heading"
@@ -93,8 +108,15 @@ export default function DatePicker({
           </span>
           <button
             type="button"
-            onClick={() => setCurrentMonth(addMonths(currentMonth, 1))}
-            className="flex h-8 w-8 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-primary-light hover:text-text-heading"
+            onClick={() =>
+              canGoNext && setCurrentMonth(addMonths(currentMonth, 1))
+            }
+            disabled={!canGoNext}
+            className={`flex h-8 w-8 items-center justify-center rounded-md transition-colors ${
+              canGoNext
+                ? "text-text-muted hover:bg-primary-light hover:text-text-heading"
+                : "cursor-not-allowed text-text-subtle"
+            }`}
           >
             <ChevronRight className="h-4 w-4" />
           </button>

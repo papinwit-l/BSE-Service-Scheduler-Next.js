@@ -95,7 +95,9 @@ export default function CustomerForm({
               id="carModelId"
               value={values.carModelId}
               onChange={(e) => onChange("carModelId", e.target.value)}
-              className="input-inner bg-transparent"
+              // Native option lists are drawn by the OS, so they need their
+              // own colors — Tailwind on the <select> doesn't reach them.
+              className="input-inner appearance-none bg-transparent [&>option]:bg-[#111116] [&>option]:text-[#D4D4D8]"
             >
               <option value="">เลือกรุ่นรถ</option>
               {carModels.map((m) => (
