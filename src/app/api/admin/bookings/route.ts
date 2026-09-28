@@ -1,3 +1,4 @@
+//api/admin/bookings/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { BookingStatus, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";

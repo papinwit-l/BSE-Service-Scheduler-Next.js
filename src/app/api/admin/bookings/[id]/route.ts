@@ -326,7 +326,7 @@ export async function PATCH(
 
     // ─── One LINE message per save, after the transaction commits ───
     let lineNotified = false;
-    const { updated, statusChanged, scheduleChanged } = result;
+    const { updated, statusChanged } = result;
 
     if (
       sendNotify &&
