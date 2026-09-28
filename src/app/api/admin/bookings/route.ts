@@ -49,6 +49,8 @@ export async function GET(request: NextRequest) {
     const status = searchParams.get("status");
     const search = searchParams.get("search");
     const date = searchParams.get("date");
+    const from = searchParams.get("from");
+    const to = searchParams.get("to");
     const upcoming = searchParams.get("upcoming") === "1";
 
     const sortField = parseSortField(searchParams.get("sortBy"));
@@ -71,11 +73,20 @@ export async function GET(request: NextRequest) {
     const dateRange: Prisma.DateTimeFilter = {};
 
     if (date && isValidDateStr(date)) {
+      // A single day
       const d = toDateOnly(date);
       const next = new Date(d);
       next.setUTCDate(next.getUTCDate() + 1);
       dateRange.gte = d;
       dateRange.lt = next;
+    } else {
+      // An inclusive range — used by the dashboard's week cards
+      if (from && isValidDateStr(from)) dateRange.gte = toDateOnly(from);
+      if (to && isValidDateStr(to)) {
+        const t = toDateOnly(to);
+        t.setUTCDate(t.getUTCDate() + 1);
+        dateRange.lt = t;
+      }
     }
 
     if (upcoming) {
