@@ -1,51 +1,49 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { bookingSchema } from "@/lib/validators";
-import { generateBookingCode } from "@/lib/booking-code";
+import { generateBookingCode, generateAccessToken } from "@/lib/booking-code";
+import {
+  getAvailability,
+  checkSlot,
+  WARNING_MESSAGES,
+} from "@/lib/availability";
+import { getSettings } from "@/lib/settings";
+import { toDateOnly } from "@/lib/date";
 import { rateLimit, getClientIp } from "@/lib/rate-limit";
 import { isBot, isValidOrigin, sanitize } from "@/lib/security";
 
 export async function POST(request: NextRequest) {
   try {
-    // ─── Security: Origin validation ───
     if (!isValidOrigin(request.headers)) {
-      return NextResponse.json(
-        { error: "คำขอไม่ถูกต้อง" },
-        { status: 403 }
-      );
+      return NextResponse.json({ error: "คำขอไม่ถูกต้อง" }, { status: 403 });
     }
 
-    // ─── Security: Rate limiting (5 bookings per IP per hour) ───
+    // 5 bookings per IP per hour
     const clientIp = getClientIp(request.headers);
-    const { limited, remaining, resetIn } = rateLimit(
+    const { limited, resetIn } = rateLimit(
       `booking:${clientIp}`,
       5,
-      60 * 60 * 1000 // 1 hour
+      60 * 60 * 1000,
     );
 
     if (limited) {
       const retryAfter = Math.ceil(resetIn / 1000);
       return NextResponse.json(
         { error: `คำขอมากเกินไป กรุณารอ ${Math.ceil(retryAfter / 60)} นาที` },
-        {
-          status: 429,
-          headers: { "Retry-After": retryAfter.toString() },
-        }
+        { status: 429, headers: { "Retry-After": retryAfter.toString() } },
       );
     }
 
     const body = await request.json();
 
-    // ─── Security: Honeypot check ───
+    // Honeypot — answer like a success so the bot doesn't retry
     if (isBot(body)) {
-      // Return fake success to not tip off the bot
       return NextResponse.json(
-        { bookingCode: "BK-000000", id: "fake", status: "PENDING" },
-        { status: 201 }
+        { bookingCode: "BSE-0000-000000", id: "fake", status: "PENDING" },
+        { status: 201 },
       );
     }
 
-    // Validate input
     const result = bookingSchema.safeParse(body);
     if (!result.success) {
       const errors = result.error.issues.map((issue) => ({
@@ -55,127 +53,149 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ errors }, { status: 400 });
     }
 
-    const { customerName: rawName, customerPhone: rawPhone, licensePlate: rawPlate, mileage, date, timeBlockId, serviceIds, notes: rawNotes } =
-      result.data;
+    const data = result.data;
+    const settings = await getSettings();
 
-    // ─── Security: Sanitize user input ───
-    const customerName = sanitize(rawName);
-    const customerPhone = sanitize(rawPhone);
-    const licensePlate = sanitize(rawPlate);
-    const notes = rawNotes ? sanitize(rawNotes) : undefined;
+    const customerName = sanitize(data.customerName);
+    const customerPhone = sanitize(data.customerPhone);
+    const licensePlate = sanitize(data.licensePlate);
+    const customerNote = data.customerNote ? sanitize(data.customerNote) : null;
+    const bodyNo = data.bodyNo ? sanitize(data.bodyNo) : null;
 
-    const bookingDate = new Date(date);
-
-    // Verify the date is not closed
-    const dayOfWeek = bookingDate.getDay();
-    const dayConfig = await prisma.dayConfig.findUnique({
-      where: { dayOfWeek },
-    });
-
-    if (dayConfig?.isClosed) {
+    // "Required" lives here, not in the schema, so admin can flip it
+    // in settings without a migration.
+    if (settings.require_body_no && !bodyNo) {
       return NextResponse.json(
-        { error: "วันที่เลือกเป็นวันหยุด" },
-        { status: 400 }
+        { errors: [{ field: "bodyNo", message: "กรุณากรอกเลขตัวถัง" }] },
+        { status: 400 },
       );
     }
 
-    const closedDate = await prisma.closedDate.findUnique({
-      where: { date: bookingDate },
-    });
+    // ─── Car model: snapshot the name either way ───
+    let carModel: string;
+    let carModelId: string | null = null;
 
-    if (closedDate) {
-      return NextResponse.json(
-        { error: `วันที่เลือกเป็นวันหยุด: ${closedDate.reason || ""}` },
-        { status: 400 }
-      );
+    if (data.carModelId?.trim()) {
+      const model = await prisma.carModel.findFirst({
+        where: { id: data.carModelId, active: true },
+        select: { id: true, name: true },
+      });
+
+      if (!model) {
+        return NextResponse.json(
+          { errors: [{ field: "carModelId", message: "ไม่พบรุ่นรถที่เลือก" }] },
+          { status: 400 },
+        );
+      }
+
+      carModel = model.name;
+      carModelId = model.id;
+    } else {
+      carModel = sanitize(data.carModelOther ?? "");
+
+      if (!carModel) {
+        return NextResponse.json(
+          { errors: [{ field: "carModelOther", message: "กรุณาระบุรุ่นรถ" }] },
+          { status: 400 },
+        );
+      }
     }
 
-    // Verify slot availability
-    const timeBlock = await prisma.timeBlock.findUnique({
-      where: { id: timeBlockId },
-    });
-
-    if (!timeBlock || !timeBlock.active) {
-      return NextResponse.json(
-        { error: "ช่วงเวลาที่เลือกไม่พร้อมให้บริการ" },
-        { status: 400 }
-      );
-    }
-
-    const currentBookings = await prisma.booking.count({
-      where: {
-        date: bookingDate,
-        timeBlockId,
-        status: { notIn: ["CANCELLED"] },
-      },
-    });
-
-    if (currentBookings >= timeBlock.maxBookings) {
-      return NextResponse.json(
-        { error: "ช่วงเวลาที่เลือกเต็มแล้ว" },
-        { status: 400 }
-      );
-    }
-
-    // Verify services exist
+    // ─── Services must exist and be active ───
     const services = await prisma.service.findMany({
-      where: { id: { in: serviceIds }, active: true },
+      where: { id: { in: data.serviceIds }, active: true },
+      select: { id: true },
     });
 
-    if (services.length !== serviceIds.length) {
+    if (services.length !== data.serviceIds.length) {
       return NextResponse.json(
         { error: "บริการบางรายการไม่พร้อมให้บริการ" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
-    // Generate unique booking code with retry
-    let bookingCode = generateBookingCode();
-    let attempts = 0;
-    while (attempts < 5) {
-      const exists = await prisma.booking.findUnique({
-        where: { bookingCode },
-      });
-      if (!exists) break;
-      bookingCode = generateBookingCode();
-      attempts++;
+    // ─── Date-level rules, for a readable error message ───
+    const availability = await getAvailability({
+      dateStr: data.date,
+      serviceIds: data.serviceIds,
+    });
+
+    if (availability.closed || availability.noCommonSlots) {
+      return NextResponse.json(
+        { error: availability.reason || "ไม่สามารถจองวันนี้ได้" },
+        { status: 400 },
+      );
     }
 
-    // Create booking with services
-    const booking = await prisma.booking.create({
-      data: {
-        bookingCode,
-        customerName,
-        customerPhone,
-        licensePlate,
-        mileage,
-        date: bookingDate,
-        timeBlockId,
-        notes: notes || null,
-        bookingServices: {
-          create: serviceIds.map((serviceId) => ({ serviceId })),
+    // ─── Create ───
+    // The slot is re-checked under a row lock inside the transaction: the
+    // seat may have gone between page load and submit.
+    const booking = await prisma.$transaction(async (tx) => {
+      const check = await checkSlot(tx, {
+        dateStr: data.date,
+        timeSlotId: data.timeSlotId,
+        serviceIds: data.serviceIds,
+      });
+
+      if (!check.ok || !check.time) {
+        throw new SlotUnavailable(
+          check.warnings.includes("CAPACITY")
+            ? "ช่วงเวลานี้เพิ่งเต็ม กรุณาเลือกเวลาอื่น"
+            : WARNING_MESSAGES[check.warnings[0]] ||
+                "ช่วงเวลาไม่พร้อมให้บริการ",
+        );
+      }
+
+      const bookingCode = await generateBookingCode(tx);
+
+      return tx.booking.create({
+        data: {
+          bookingCode,
+          accessToken: generateAccessToken(),
+          customerName,
+          customerPhone,
+          licensePlate,
+          carModel,
+          carModelId,
+          bodyNo,
+          mileage: data.mileage,
+          date: toDateOnly(data.date),
+          bookingTime: check.time, // snapshot
+          timeSlotId: data.timeSlotId,
+          customerNote,
+          bookingServices: {
+            create: data.serviceIds.map((serviceId) => ({ serviceId })),
+          },
         },
-      },
-      include: {
-        timeBlock: true,
-        bookingServices: {
-          include: { service: true },
+        select: {
+          id: true,
+          bookingCode: true,
+          accessToken: true,
+          status: true,
         },
-      },
+      });
     });
 
     return NextResponse.json(
       {
-        bookingCode: booking.bookingCode,
         id: booking.id,
+        bookingCode: booking.bookingCode,
+        accessToken: booking.accessToken,
         status: booking.status,
       },
-      { status: 201 }
+      { status: 201 },
     );
-  } catch {
+  } catch (err) {
+    if (err instanceof SlotUnavailable) {
+      return NextResponse.json({ error: err.message }, { status: 409 });
+    }
+
+    console.error("[bookings] create failed", err);
     return NextResponse.json(
       { error: "ไม่สามารถสร้างการจองได้ กรุณาลองใหม่" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
+
+class SlotUnavailable extends Error {}
