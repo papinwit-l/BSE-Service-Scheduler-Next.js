@@ -1,29 +1,32 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { sendStatusUpdate } from "@/lib/line";
+import { requireAdmin, authErrorResponse } from "@/lib/guards";
+import { logAudit } from "@/lib/audit";
+import { sendNotification } from "@/lib/line";
+import { toDateStr } from "@/lib/date";
 
+/**
+ * POST /api/admin/bookings/[id]/notify
+ * Body: { trigger?: "REMINDER" | ... } — defaults to the current status.
+ *
+ * Resends a notification by hand, e.g. when the customer says they never
+ * got it. Normal status changes send from the PATCH route instead.
+ */
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const session = await auth();
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   try {
+    const actor = await requireAdmin();
     const { id } = await params;
+
     const body = await request.json().catch(() => ({}));
-    const trigger = body.trigger || null; // optional: "REMINDER" or null for current status
+    const trigger: string = body.trigger || "";
 
     const booking = await prisma.booking.findUnique({
       where: { id },
       include: {
-        timeBlock: true,
-        bookingServices: {
-          include: { service: true },
-        },
+        bookingServices: { include: { service: { select: { name: true } } } },
       },
     });
 
@@ -38,24 +41,38 @@ export async function POST(
       );
     }
 
-    const success = await sendStatusUpdate(booking.lineUserId, {
+    const resolvedTrigger = trigger || booking.status;
+
+    const sent = await sendNotification(booking.lineUserId, resolvedTrigger, {
       bookingCode: booking.bookingCode,
-      status: trigger || booking.status,
       customerName: booking.customerName,
-      date: booking.date.toISOString().split("T")[0],
-      timeBlock: `${booking.timeBlock.label} (${booking.timeBlock.startTime}–${booking.timeBlock.endTime})`,
+      date: toDateStr(booking.date),
+      time: booking.bookingTime,
       services: booking.bookingServices.map((bs) => bs.service.name),
     });
 
-    if (success) {
-      return NextResponse.json({ sent: true });
-    } else {
+    await logAudit({
+      actor,
+      action: sent ? "NOTIFICATION_SENT" : "NOTIFICATION_FAILED",
+      entityType: "Booking",
+      entityId: booking.id,
+      entityLabel: booking.bookingCode,
+      changes: { trigger: resolvedTrigger, manual: true },
+    });
+
+    if (!sent) {
       return NextResponse.json(
-        { error: "ส่งแจ้งเตือนไม่สำเร็จ" },
+        { error: "ส่งแจ้งเตือนไม่สำเร็จ (ตรวจสอบว่าเทมเพลตเปิดใช้งานอยู่)" },
         { status: 500 },
       );
     }
-  } catch {
+
+    return NextResponse.json({ sent: true });
+  } catch (err) {
+    const res = authErrorResponse(err);
+    if (res) return res;
+
+    console.error("[admin/bookings/:id/notify] failed", err);
     return NextResponse.json({ error: "เกิดข้อผิดพลาด" }, { status: 500 });
   }
 }
