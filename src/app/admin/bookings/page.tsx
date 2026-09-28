@@ -15,9 +15,11 @@ import {
   ArrowUp,
   ArrowDown,
   Check,
+  Plus,
 } from "lucide-react";
 import { format } from "date-fns";
 import { th } from "date-fns/locale";
+import { STATUS_FILTERS, statusMeta } from "@/lib/booking-status";
 
 type Booking = {
   id: string;
@@ -25,23 +27,18 @@ type Booking = {
   customerName: string;
   customerPhone: string;
   licensePlate: string;
+  carModel: string;
   date: string;
+  time: string;
+  period: "MORNING" | "AFTERNOON";
   status: string;
   createdAt: string;
-  timeBlock: { label: string; time: string };
+  serviceStartedAt: string | null;
   services: string[];
 };
 
 type SortField = "date" | "createdAt";
 type SortDirection = "asc" | "desc";
-
-const STATUS_FILTERS = [
-  { value: "ALL", label: "ทั้งหมด" },
-  { value: "PENDING", label: "รอดำเนินการ" },
-  { value: "CONFIRMED", label: "ยืนยันแล้ว" },
-  { value: "COMPLETED", label: "เสร็จสิ้น" },
-  { value: "CANCELLED", label: "ยกเลิก" },
-];
 
 const SORT_OPTIONS: {
   field: SortField;
@@ -53,13 +50,6 @@ const SORT_OPTIONS: {
   { field: "createdAt", direction: "desc", label: "วันที่จอง — ล่าสุดก่อน" },
   { field: "createdAt", direction: "asc", label: "วันที่จอง — เก่าสุดก่อน" },
 ];
-
-const STATUS_BADGE: Record<string, { label: string; className: string }> = {
-  PENDING: { label: "รอดำเนินการ", className: "badge-pending" },
-  CONFIRMED: { label: "ยืนยันแล้ว", className: "badge-confirmed" },
-  COMPLETED: { label: "เสร็จสิ้น", className: "badge-completed" },
-  CANCELLED: { label: "ยกเลิก", className: "badge-cancelled" },
-};
 
 export default function AdminBookingsPage() {
   const [bookings, setBookings] = useState<Booking[]>([]);
@@ -77,7 +67,6 @@ export default function AdminBookingsPage() {
 
   const sortRef = useRef<HTMLDivElement>(null);
 
-  // Close sort dropdown on outside click / Escape
   useEffect(() => {
     if (!sortOpen) return;
 
@@ -134,7 +123,6 @@ export default function AdminBookingsPage() {
     fetchBookings();
   }, [fetchBookings]);
 
-  // Reset page when filters or sort change
   useEffect(() => {
     setPage(1);
   }, [
@@ -156,26 +144,31 @@ export default function AdminBookingsPage() {
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       {/* Header */}
-      <div>
-        <div className="section-label mb-1">จัดการ</div>
-        <h1 className="section-heading text-2xl">รายการจอง</h1>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="section-label mb-1">จัดการ</div>
+          <h1 className="section-heading text-2xl">รายการจอง</h1>
+        </div>
+        <Link href="/admin/bookings/new" className="btn-primary text-sm">
+          <Plus className="h-4 w-4" />
+          เพิ่มการจอง
+        </Link>
       </div>
 
       {/* Filters */}
       <div className="space-y-3">
-        {/* Search */}
         <div className="input-wrapper">
           <Search className="h-4 w-4 shrink-0 text-text-muted" />
           <input
             type="text"
-            placeholder="ค้นหา ชื่อ เบอร์โทร ทะเบียนรถ รหัสจอง..."
+            placeholder="ค้นหา ชื่อ เบอร์โทร ทะเบียนรถ รุ่นรถ รหัสจอง..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="input-inner"
           />
         </div>
 
-        {/* Status filter row */}
+        {/* Status filters */}
         <div className="flex flex-wrap items-center gap-1.5">
           <Filter className="h-3.5 w-3.5 text-text-muted" />
           <div className="flex flex-wrap gap-1">
@@ -196,9 +189,8 @@ export default function AdminBookingsPage() {
           </div>
         </div>
 
-        {/* Date / sort / count row */}
+        {/* Date, upcoming, sort */}
         <div className="flex flex-wrap items-center gap-3">
-          {/* Date filter */}
           <input
             type="date"
             value={dateFilter}
@@ -216,21 +208,19 @@ export default function AdminBookingsPage() {
             </button>
           )}
 
-          {/* Upcoming only */}
           <button
             type="button"
             onClick={() => setUpcomingOnly((v) => !v)}
             aria-pressed={upcomingOnly}
             className={`rounded-md border px-3 py-1.5 text-xs font-medium transition-all ${
               upcomingOnly
-                ? "border-accent/40 bg-accent-subtle text-accent"
+                ? "border-accent-border bg-accent-subtle text-accent"
                 : "border-border-light text-text-muted hover:border-border hover:text-text-heading"
             }`}
           >
             เฉพาะที่จะถึง
           </button>
 
-          {/* Sort dropdown */}
           <div className="relative" ref={sortRef}>
             <button
               type="button"
@@ -287,14 +277,13 @@ export default function AdminBookingsPage() {
             )}
           </div>
 
-          {/* Total count */}
           <span className="ml-auto text-xs text-text-muted">
             {total} รายการ
           </span>
         </div>
       </div>
 
-      {/* Bookings list */}
+      {/* List */}
       {loading ? (
         <div className="flex items-center justify-center gap-2 py-16 text-text-muted">
           <Loader2 className="h-5 w-5 animate-spin" />
@@ -308,7 +297,7 @@ export default function AdminBookingsPage() {
       ) : (
         <div className="space-y-2">
           {bookings.map((booking) => {
-            const badge = STATUS_BADGE[booking.status] || STATUS_BADGE.PENDING;
+            const meta = statusMeta(booking.status);
 
             return (
               <Link
@@ -321,21 +310,18 @@ export default function AdminBookingsPage() {
                   <span className="text-xs font-medium text-text-heading">
                     {format(new Date(booking.date), "d MMM", { locale: th })}
                   </span>
-                  <span className="text-xs text-accent">
-                    {booking.timeBlock.label}
-                  </span>
-                  <span className="font-mono text-[9px] text-text-muted">
-                    {booking.timeBlock.time}
+                  <span className="text-data text-sm text-accent">
+                    {booking.time}
                   </span>
                 </div>
 
                 {/* Details */}
-                <div className="flex-1 min-w-0">
+                <div className="min-w-0 flex-1">
                   <div className="mb-1 flex flex-wrap items-center gap-2">
                     <span className="text-data text-sm text-accent">
                       {booking.bookingCode}
                     </span>
-                    <span className={badge.className}>{badge.label}</span>
+                    <span className={meta.badge}>{meta.label}</span>
                   </div>
 
                   <div className="mb-1.5 text-sm font-medium text-text-heading">
@@ -346,6 +332,8 @@ export default function AdminBookingsPage() {
                     <span className="flex items-center gap-1">
                       <Car className="h-3 w-3" />
                       <span className="text-data">{booking.licensePlate}</span>
+                      <span className="text-text-subtle">·</span>
+                      {booking.carModel}
                     </span>
                     <span className="flex items-center gap-1">
                       <Wrench className="h-3 w-3" />
@@ -353,7 +341,6 @@ export default function AdminBookingsPage() {
                     </span>
                   </div>
 
-                  {/* Show created date when sorting by it */}
                   {sortField === "createdAt" && (
                     <div className="mt-1 font-mono text-[10px] text-text-subtle">
                       จองเมื่อ{" "}
