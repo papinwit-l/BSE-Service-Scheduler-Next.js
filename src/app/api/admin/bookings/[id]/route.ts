@@ -1,150 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { BookingStatus, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { requireAdmin, authErrorResponse } from "@/lib/guards";
-import { logAudit } from "@/lib/audit";
+import { requireAdmin, authErrorResponse, can } from "@/lib/guards";
+import { logAudit, diff } from "@/lib/audit";
 import {
   checkSlot,
   WARNING_MESSAGES,
   type SlotWarning,
 } from "@/lib/availability";
-import { generateBookingCode, generateAccessToken } from "@/lib/booking-code";
-import { bangkokToday, toDateOnly, isValidDateStr } from "@/lib/date";
+import { toDateOnly, toDateStr, isValidDateStr } from "@/lib/date";
 import { sanitize } from "@/lib/security";
+import { sendNotification, type NotifyTrigger } from "@/lib/line";
 
-const PAGE_SIZE = 20;
-
-const SORT_FIELDS = ["date", "createdAt"] as const;
-type SortField = (typeof SORT_FIELDS)[number];
-
-function parseSortField(value: string | null): SortField {
-  return SORT_FIELDS.includes(value as SortField)
-    ? (value as SortField)
-    : "date";
-}
-
-function parseSortDir(value: string | null): Prisma.SortOrder {
-  return value === "desc" ? "desc" : "asc";
-}
-
-function buildOrderBy(
-  field: SortField,
-  dir: Prisma.SortOrder,
-): Prisma.BookingOrderByWithRelationInput[] {
-  if (field === "createdAt") return [{ createdAt: dir }];
-
-  // bookingTime is zero-padded ("09:30"), so string order is time order —
-  // no join to the slot table needed.
-  return [{ date: dir }, { bookingTime: dir }, { createdAt: "asc" }];
-}
-
-// ─── GET: list ───
-
-export async function GET(request: NextRequest) {
-  try {
-    await requireAdmin();
-
-    const { searchParams } = new URL(request.url);
-    const status = searchParams.get("status");
-    const search = searchParams.get("search");
-    const date = searchParams.get("date");
-    const upcoming = searchParams.get("upcoming") === "1";
-
-    const sortField = parseSortField(searchParams.get("sortBy"));
-    const sortDir = parseSortDir(searchParams.get("sortDir"));
-
-    const pageParam = parseInt(searchParams.get("page") || "1", 10);
-    const page = Number.isFinite(pageParam) && pageParam > 0 ? pageParam : 1;
-    const skip = (page - 1) * PAGE_SIZE;
-
-    const where: Prisma.BookingWhereInput = {};
-
-    if (status && status !== "ALL") {
-      if (Object.values(BookingStatus).includes(status as BookingStatus)) {
-        where.status = status as BookingStatus;
-      }
-    }
-
-    // The date filter and "upcoming only" both constrain `date`, so they
-    // are merged rather than overwriting each other.
-    const dateRange: Prisma.DateTimeFilter = {};
-
-    if (date && isValidDateStr(date)) {
-      const d = toDateOnly(date);
-      const next = new Date(d);
-      next.setUTCDate(next.getUTCDate() + 1);
-      dateRange.gte = d;
-      dateRange.lt = next;
-    }
-
-    if (upcoming) {
-      const today = bangkokToday();
-      if (!dateRange.gte || today > (dateRange.gte as Date)) {
-        dateRange.gte = today;
-      }
-    }
-
-    if (Object.keys(dateRange).length > 0) where.date = dateRange;
-
-    if (search) {
-      where.OR = [
-        { bookingCode: { contains: search.toUpperCase() } },
-        { customerName: { contains: search } },
-        { customerPhone: { contains: search } },
-        { licensePlate: { contains: search } },
-        { carModel: { contains: search } },
-      ];
-    }
-
-    const [bookings, total] = await Promise.all([
-      prisma.booking.findMany({
-        where,
-        include: {
-          timeSlot: { select: { period: true } },
-          bookingServices: { include: { service: { select: { name: true } } } },
-        },
-        orderBy: buildOrderBy(sortField, sortDir),
-        skip,
-        take: PAGE_SIZE,
-      }),
-      prisma.booking.count({ where }),
-    ]);
-
-    return NextResponse.json({
-      bookings: bookings.map((b) => ({
-        id: b.id,
-        bookingCode: b.bookingCode,
-        customerName: b.customerName,
-        customerPhone: b.customerPhone,
-        licensePlate: b.licensePlate,
-        carModel: b.carModel,
-        date: b.date.toISOString().split("T")[0],
-        time: b.bookingTime,
-        period: b.timeSlot.period,
-        status: b.status,
-        createdAt: b.createdAt.toISOString(),
-        serviceStartedAt: b.serviceStartedAt?.toISOString() ?? null,
-        services: b.bookingServices.map((bs) => bs.service.name),
-      })),
-      total,
-      page,
-      totalPages: Math.max(1, Math.ceil(total / PAGE_SIZE)),
-      sortBy: sortField,
-      sortDir,
-    });
-  } catch (err) {
-    const res = authErrorResponse(err);
-    if (res) return res;
-
-    console.error("[admin/bookings] list failed", err);
-    return NextResponse.json(
-      { error: "ไม่สามารถโหลดข้อมูลได้" },
-      { status: 500 },
-    );
-  }
-}
-
-// ─── POST: admin creates a booking (phone or walk-in) ───
+const CLOSED_STATUSES: BookingStatus[] = ["COMPLETED", "CANCELLED"];
 
 class OverrideRequired extends Error {
   constructor(public warnings: SlotWarning[]) {
@@ -152,13 +20,90 @@ class OverrideRequired extends Error {
   }
 }
 class SlotClosed extends Error {}
+class Stale extends Error {}
 
-export async function POST(request: NextRequest) {
+// ─── GET ───
+
+export async function GET(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  try {
+    await requireAdmin();
+    const { id } = await params;
+
+    const booking = await prisma.booking.findUnique({
+      where: { id },
+      include: {
+        timeSlot: { select: { id: true, time: true, period: true } },
+        carModelRef: { select: { id: true, name: true } },
+        createdByAdmin: { select: { name: true } },
+        bookingServices: { include: { service: true } },
+      },
+    });
+
+    if (!booking) {
+      return NextResponse.json({ error: "ไม่พบรายการจอง" }, { status: 404 });
+    }
+
+    return NextResponse.json({
+      id: booking.id,
+      bookingCode: booking.bookingCode,
+      customerName: booking.customerName,
+      customerPhone: booking.customerPhone,
+      licensePlate: booking.licensePlate,
+      carModel: booking.carModel,
+      carModelId: booking.carModelId,
+      bodyNo: booking.bodyNo,
+      mileage: booking.mileage,
+      date: toDateStr(booking.date),
+      time: booking.bookingTime,
+      timeSlotId: booking.timeSlotId,
+      period: booking.timeSlot.period,
+      status: booking.status,
+      lineUserId: booking.lineUserId,
+      lineLinked: !!booking.lineUserId,
+      customerNote: booking.customerNote,
+      adminNote: booking.adminNote,
+      serviceStartedAt: booking.serviceStartedAt?.toISOString() ?? null,
+      completedAt: booking.completedAt?.toISOString() ?? null,
+      createdByAdmin: booking.createdByAdmin?.name ?? null,
+      createdAt: booking.createdAt.toISOString(),
+      // Optimistic-lock token — send this back with PATCH
+      updatedAt: booking.updatedAt.toISOString(),
+      services: booking.bookingServices.map((bs) => ({
+        id: bs.service.id,
+        name: bs.service.name,
+      })),
+    });
+  } catch (err) {
+    const res = authErrorResponse(err);
+    if (res) return res;
+
+    console.error("[admin/bookings/:id] get failed", err);
+    return NextResponse.json(
+      { error: "ไม่สามารถโหลดข้อมูลได้" },
+      { status: 500 },
+    );
+  }
+}
+
+// ─── PATCH: edit and/or change status, in one save ───
+
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
   try {
     const actor = await requireAdmin();
+    const { id } = await params;
     const body = await request.json();
 
     const {
+      status,
+      date,
+      timeSlotId,
+      serviceIds,
       customerName,
       customerPhone,
       licensePlate,
@@ -166,136 +111,273 @@ export async function POST(request: NextRequest) {
       carModelOther,
       bodyNo,
       mileage,
-      date,
-      timeSlotId,
-      serviceIds,
-      customerNote,
       adminNote,
-      status = "PENDING",
+      sendNotify = true,
       confirmOverride = false,
+      updatedAt, // optimistic-lock token from GET
     } = body;
 
+    const existing = await prisma.booking.findUnique({
+      where: { id },
+      include: {
+        bookingServices: { select: { serviceId: true } },
+        timeSlot: { select: { time: true } },
+      },
+    });
+
+    if (!existing) {
+      return NextResponse.json({ error: "ไม่พบรายการจอง" }, { status: 404 });
+    }
+
+    // Finished and cancelled bookings are history: ADMIN can't rewrite them.
     if (
-      !customerName?.trim() ||
-      !customerPhone?.trim() ||
-      !licensePlate?.trim()
+      CLOSED_STATUSES.includes(existing.status) &&
+      !can(actor.role, "EDIT_CLOSED_BOOKING")
     ) {
       return NextResponse.json(
-        { error: "กรุณากรอกชื่อ เบอร์โทร และทะเบียนรถ" },
-        { status: 400 },
+        {
+          error:
+            "รายการที่เสร็จสิ้นหรือยกเลิกแล้ว แก้ไขได้เฉพาะผู้ดูแลระบบสูงสุด",
+        },
+        { status: 403 },
       );
     }
 
-    if (!isValidDateStr(date) || !timeSlotId) {
-      return NextResponse.json(
-        { error: "กรุณาเลือกวันและเวลา" },
-        { status: 400 },
-      );
+    // Someone else may have saved while this form was open.
+    if (updatedAt && existing.updatedAt.toISOString() !== updatedAt) {
+      throw new Stale();
     }
 
-    if (!Array.isArray(serviceIds) || serviceIds.length === 0) {
-      return NextResponse.json(
-        { error: "กรุณาเลือกบริการอย่างน้อย 1 รายการ" },
-        { status: 400 },
-      );
-    }
-
-    if (!Object.values(BookingStatus).includes(status)) {
+    if (status && !Object.values(BookingStatus).includes(status)) {
       return NextResponse.json({ error: "สถานะไม่ถูกต้อง" }, { status: 400 });
     }
 
-    // Car model: snapshot the name either way
-    let carModel: string;
-    let resolvedModelId: string | null = null;
+    const nextStatus: BookingStatus = status ?? existing.status;
+    const nextDate =
+      date && isValidDateStr(date) ? date : toDateStr(existing.date);
+    const nextSlotId = timeSlotId ?? existing.timeSlotId;
+    const nextServiceIds: string[] = Array.isArray(serviceIds)
+      ? serviceIds
+      : existing.bookingServices.map((bs) => bs.serviceId);
 
-    if (carModelId) {
-      const model = await prisma.carModel.findUnique({
-        where: { id: carModelId },
-        select: { id: true, name: true },
-      });
+    const scheduleChanged =
+      nextDate !== toDateStr(existing.date) ||
+      nextSlotId !== existing.timeSlotId;
+    const servicesChanged =
+      Array.isArray(serviceIds) &&
+      (serviceIds.length !== existing.bookingServices.length ||
+        serviceIds.some(
+          (sid: string) =>
+            !existing.bookingServices.some((bs) => bs.serviceId === sid),
+        ));
 
-      if (!model) {
-        return NextResponse.json({ error: "ไม่พบรุ่นรถ" }, { status: 400 });
-      }
+    // Car model
+    let carModel = existing.carModel;
+    let resolvedModelId = existing.carModelId;
 
-      carModel = model.name;
-      resolvedModelId = model.id;
-    } else {
-      carModel = sanitize(carModelOther ?? "");
-      if (!carModel) {
-        return NextResponse.json({ error: "กรุณาระบุรุ่นรถ" }, { status: 400 });
+    if (carModelId !== undefined || carModelOther !== undefined) {
+      if (carModelId) {
+        const model = await prisma.carModel.findUnique({
+          where: { id: carModelId },
+          select: { id: true, name: true },
+        });
+        if (!model) {
+          return NextResponse.json({ error: "ไม่พบรุ่นรถ" }, { status: 400 });
+        }
+        carModel = model.name;
+        resolvedModelId = model.id;
+      } else if (carModelOther?.trim()) {
+        carModel = sanitize(carModelOther);
+        resolvedModelId = null;
       }
     }
 
-    const booking = await prisma.$transaction(async (tx) => {
-      const check = await checkSlot(tx, {
-        dateStr: date,
-        timeSlotId,
-        serviceIds,
+    const result = await prisma.$transaction(async (tx) => {
+      let bookingTime = existing.bookingTime;
+      let overrides: SlotWarning[] = [];
+
+      // Only re-check the slot when the schedule or services moved, and
+      // never for a cancelled booking — it no longer occupies a seat.
+      if ((scheduleChanged || servicesChanged) && nextStatus !== "CANCELLED") {
+        const check = await checkSlot(tx, {
+          dateStr: nextDate,
+          timeSlotId: nextSlotId,
+          serviceIds: nextServiceIds,
+          excludeBookingId: id, // don't count this booking against itself
+        });
+
+        if (!check.time || check.warnings.includes("SLOT_CLOSED")) {
+          throw new SlotClosed();
+        }
+
+        const blocking = check.warnings.filter((w) => w !== "LEAD_TIME");
+
+        if (blocking.length > 0 && !confirmOverride) {
+          throw new OverrideRequired(blocking);
+        }
+
+        overrides = blocking;
+        bookingTime = check.time;
+      }
+
+      const data: Prisma.BookingUpdateInput = {
+        status: nextStatus,
+        date: toDateOnly(nextDate),
+        bookingTime,
+        timeSlot: { connect: { id: nextSlotId } },
+        carModel,
+        carModelRef: resolvedModelId
+          ? { connect: { id: resolvedModelId } }
+          : { disconnect: true },
+      };
+
+      if (customerName !== undefined)
+        data.customerName = sanitize(customerName);
+      if (customerPhone !== undefined)
+        data.customerPhone = sanitize(customerPhone);
+      if (licensePlate !== undefined)
+        data.licensePlate = sanitize(licensePlate);
+      if (bodyNo !== undefined) data.bodyNo = bodyNo ? sanitize(bodyNo) : null;
+      if (mileage !== undefined) data.mileage = Number(mileage) || 0;
+      if (adminNote !== undefined) {
+        data.adminNote = adminNote ? sanitize(adminNote) : null;
+      }
+
+      // Service timestamps follow the status automatically
+      if (nextStatus === "IN_SERVICE" && !existing.serviceStartedAt) {
+        data.serviceStartedAt = new Date();
+      }
+      if (nextStatus === "COMPLETED") {
+        data.completedAt = existing.completedAt ?? new Date();
+      } else if (existing.completedAt) {
+        data.completedAt = null; // reopened
+      }
+
+      if (servicesChanged) {
+        data.bookingServices = {
+          deleteMany: {},
+          create: nextServiceIds.map((serviceId) => ({ serviceId })),
+        };
+      }
+
+      const updated = await tx.booking.update({
+        where: { id },
+        data,
+        include: {
+          bookingServices: { include: { service: { select: { name: true } } } },
+        },
       });
 
-      if (!check.time || check.warnings.includes("SLOT_CLOSED")) {
-        throw new SlotClosed();
-      }
-
-      // Admins may override capacity and service restrictions, but only
-      // after confirming. Lead time doesn't apply to admin-made bookings.
-      const blocking = check.warnings.filter((w) => w !== "LEAD_TIME");
-
-      if (blocking.length > 0 && !confirmOverride) {
-        throw new OverrideRequired(blocking);
-      }
-
-      const created = await tx.booking.create({
-        data: {
-          bookingCode: await generateBookingCode(tx),
-          accessToken: generateAccessToken(),
-          customerName: sanitize(customerName),
-          customerPhone: sanitize(customerPhone),
-          licensePlate: sanitize(licensePlate),
-          carModel,
-          carModelId: resolvedModelId,
-          bodyNo: bodyNo ? sanitize(bodyNo) : null,
-          mileage: Number(mileage) || 0,
-          date: toDateOnly(date),
-          bookingTime: check.time,
-          timeSlotId,
-          status,
-          customerNote: customerNote ? sanitize(customerNote) : null,
-          adminNote: adminNote ? sanitize(adminNote) : null,
-          createdByAdminId: actor.id,
-          bookingServices: {
-            create: serviceIds.map((serviceId: string) => ({ serviceId })),
-          },
+      const changes = diff(
+        {
+          status: existing.status,
+          date: toDateStr(existing.date),
+          bookingTime: existing.bookingTime,
+          customerName: existing.customerName,
+          customerPhone: existing.customerPhone,
+          licensePlate: existing.licensePlate,
+          carModel: existing.carModel,
+          bodyNo: existing.bodyNo,
+          mileage: existing.mileage,
+          adminNote: existing.adminNote,
         },
-        select: { id: true, bookingCode: true },
+        {
+          status: updated.status,
+          date: toDateStr(updated.date),
+          bookingTime: updated.bookingTime,
+          customerName: updated.customerName,
+          customerPhone: updated.customerPhone,
+          licensePlate: updated.licensePlate,
+          carModel: updated.carModel,
+          bodyNo: updated.bodyNo,
+          mileage: updated.mileage,
+          adminNote: updated.adminNote,
+        },
+      );
+
+      if (servicesChanged) {
+        changes.services = {
+          from: existing.bookingServices.length,
+          to: nextServiceIds.length,
+        };
+      }
+      if (overrides.length > 0) {
+        changes.overrides = { from: null, to: overrides };
+      }
+
+      const statusChanged = existing.status !== updated.status;
+
+      await logAudit({
+        actor,
+        action: statusChanged
+          ? "BOOKING_STATUS_CHANGED"
+          : scheduleChanged
+            ? "BOOKING_RESCHEDULED"
+            : "BOOKING_UPDATED",
+        entityType: "Booking",
+        entityId: id,
+        entityLabel: updated.bookingCode,
+        changes,
+        tx,
+      });
+
+      return { updated, statusChanged, scheduleChanged };
+    });
+
+    // ─── One LINE message per save, after the transaction commits ───
+    let lineNotified = false;
+    const { updated, statusChanged, scheduleChanged } = result;
+
+    if (
+      sendNotify &&
+      updated.lineUserId &&
+      (statusChanged || scheduleChanged)
+    ) {
+      // A status change wins: its template already carries the new date
+      // and time, so a reschedule message would just repeat it.
+      const trigger: NotifyTrigger | string = statusChanged
+        ? updated.status
+        : "RESCHEDULED";
+
+      lineNotified = await sendNotification(updated.lineUserId, trigger, {
+        bookingCode: updated.bookingCode,
+        customerName: updated.customerName,
+        date: toDateStr(updated.date),
+        time: updated.bookingTime,
+        services: updated.bookingServices.map((bs) => bs.service.name),
       });
 
       await logAudit({
         actor,
-        action: "BOOKING_CREATED",
+        action: lineNotified ? "NOTIFICATION_SENT" : "NOTIFICATION_FAILED",
         entityType: "Booking",
-        entityId: created.id,
-        entityLabel: created.bookingCode,
-        changes: {
-          date,
-          time: check.time,
-          status,
-          ...(blocking.length > 0 ? { overrides: blocking } : {}),
-        },
-        tx,
+        entityId: id,
+        entityLabel: updated.bookingCode,
+        changes: { trigger },
       });
+    }
 
-      return created;
+    return NextResponse.json({
+      id: updated.id,
+      status: updated.status,
+      date: toDateStr(updated.date),
+      time: updated.bookingTime,
+      updatedAt: updated.updatedAt.toISOString(),
+      lineNotified,
     });
-
-    return NextResponse.json(
-      { id: booking.id, bookingCode: booking.bookingCode },
-      { status: 201 },
-    );
   } catch (err) {
     const res = authErrorResponse(err);
     if (res) return res;
+
+    if (err instanceof Stale) {
+      return NextResponse.json(
+        {
+          code: "STALE",
+          error: "มีผู้แก้ไขรายการนี้แล้ว กรุณาโหลดใหม่",
+        },
+        { status: 409 },
+      );
+    }
 
     if (err instanceof OverrideRequired) {
       return NextResponse.json(
@@ -315,10 +397,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.error("[admin/bookings] create failed", err);
-    return NextResponse.json(
-      { error: "ไม่สามารถสร้างการจองได้" },
-      { status: 500 },
-    );
+    console.error("[admin/bookings/:id] update failed", err);
+    return NextResponse.json({ error: "ไม่สามารถบันทึกได้" }, { status: 500 });
   }
 }

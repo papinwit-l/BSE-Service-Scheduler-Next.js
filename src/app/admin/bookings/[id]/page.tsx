@@ -1,203 +1,263 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { useSession } from "next-auth/react";
 import Link from "next/link";
 import {
   ArrowLeft,
   Loader2,
   AlertCircle,
-  Calendar,
-  Clock,
-  Car,
-  User,
-  Phone,
-  Wrench,
-  FileText,
-  MessageCircle,
-  CheckCircle,
-  Send,
+  AlertTriangle,
+  Save,
   Bell,
-  CalendarClock,
-  Gauge,
+  Send,
+  MessageCircle,
+  Phone,
+  Lock,
 } from "lucide-react";
 import { format } from "date-fns";
 import { th } from "date-fns/locale";
+import { toast } from "sonner";
+import BookingForm, {
+  OTHER_MODEL,
+  type AdminSlot,
+  type BookingFormState,
+} from "../_components/BookingForm";
+import { statusMeta } from "@/lib/booking-status";
 
-type BookingDetail = {
+type Detail = {
   id: string;
   bookingCode: string;
   customerName: string;
   customerPhone: string;
   licensePlate: string;
+  carModel: string;
+  carModelId: string | null;
+  bodyNo: string | null;
   mileage: number;
   date: string;
+  time: string;
+  timeSlotId: string;
   status: string;
-  lineUserId: string | null;
-  notes: string | null;
+  lineLinked: boolean;
+  customerNote: string | null;
+  adminNote: string | null;
+  serviceStartedAt: string | null;
+  completedAt: string | null;
+  createdByAdmin: string | null;
   createdAt: string;
   updatedAt: string;
-  timeBlock: { label: string; time: string };
   services: { id: string; name: string }[];
 };
 
-const STATUS_CONFIG: Record<
-  string,
-  { label: string; badge: string; color: string }
-> = {
-  PENDING: {
-    label: "รอดำเนินการ",
-    badge: "badge-pending",
-    color: "text-status-pending",
-  },
-  CONFIRMED: {
-    label: "ยืนยันแล้ว",
-    badge: "badge-confirmed",
-    color: "text-status-confirmed",
-  },
-  COMPLETED: {
-    label: "เสร็จสิ้น",
-    badge: "badge-completed",
-    color: "text-status-completed",
-  },
-  CANCELLED: {
-    label: "ยกเลิก",
-    badge: "badge-cancelled",
-    color: "text-status-cancelled",
-  },
-};
-
-const STATUS_ACTIONS: Record<string, { label: string; to: string; variant: string }[]> = {
-  PENDING: [
-    { label: "ยืนยัน", to: "CONFIRMED", variant: "btn-primary" },
-    { label: "ยกเลิก", to: "CANCELLED", variant: "btn-cancel" },
-  ],
-  CONFIRMED: [
-    { label: "เสร็จสิ้น", to: "COMPLETED", variant: "btn-primary" },
-    { label: "ยกเลิก", to: "CANCELLED", variant: "btn-cancel" },
-  ],
-  COMPLETED: [],
-  CANCELLED: [],
-};
+const CLOSED = ["COMPLETED", "CANCELLED"];
 
 export default function AdminBookingDetailPage() {
-  const params = useParams();
+  const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const id = params.id as string;
+  const { data: session } = useSession();
+  const isRoot = session?.user?.role === "ROOT";
 
-  const [booking, setBooking] = useState<BookingDetail | null>(null);
+  const [booking, setBooking] = useState<Detail | null>(null);
+  const [form, setForm] = useState<BookingFormState | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [updating, setUpdating] = useState("");
-  const [notification, setNotification] = useState("");
-  const [sendNotify, setSendNotify] = useState(true);
-  const [sending, setSending] = useState(false);
-  const [sendingReminder, setSendingReminder] = useState(false);
+  const [loadError, setLoadError] = useState("");
 
-  useEffect(() => {
-    fetch(`/api/admin/bookings/${id}`)
-      .then((res) => {
-        if (!res.ok) throw new Error();
-        return res.json();
-      })
-      .then((data) => setBooking(data))
-      .catch(() => setError("ไม่พบรายการจอง"))
-      .finally(() => setLoading(false));
+  const [services, setServices] = useState<{ id: string; name: string }[]>([]);
+  const [carModels, setCarModels] = useState<{ id: string; name: string }[]>(
+    [],
+  );
+
+  const [slots, setSlots] = useState<AdminSlot[]>([]);
+  const [loadingSlots, setLoadingSlots] = useState(false);
+  const [dateClosed, setDateClosed] = useState(false);
+  const [closedReason, setClosedReason] = useState("");
+
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [sendNotify, setSendNotify] = useState(true);
+  const [sendingManual, setSendingManual] = useState("");
+
+  // Override confirmation
+  const [overrideMessages, setOverrideMessages] = useState<string[] | null>(
+    null,
+  );
+
+  // Finished and cancelled bookings are history — ROOT only
+  const readOnly = !!booking && CLOSED.includes(booking.status) && !isRoot;
+
+  const loadBooking = useCallback(async () => {
+    try {
+      const [bookingRes, servicesRes, modelsRes] = await Promise.all([
+        fetch(`/api/admin/bookings/${id}`),
+        fetch("/api/services"),
+        fetch("/api/car-models"),
+      ]);
+
+      if (!bookingRes.ok) throw new Error();
+
+      const data: Detail = await bookingRes.json();
+      setBooking(data);
+      setServices(await servicesRes.json());
+      setCarModels(await modelsRes.json());
+
+      setForm({
+        customerName: data.customerName,
+        customerPhone: data.customerPhone,
+        licensePlate: data.licensePlate,
+        carModelId: data.carModelId ?? OTHER_MODEL,
+        carModelOther: data.carModelId ? "" : data.carModel,
+        bodyNo: data.bodyNo ?? "",
+        mileage: String(data.mileage),
+        date: data.date,
+        timeSlotId: data.timeSlotId,
+        serviceIds: data.services.map((s) => s.id),
+        adminNote: data.adminNote ?? "",
+        status: data.status,
+      });
+    } catch {
+      setLoadError("ไม่พบรายการจอง");
+    } finally {
+      setLoading(false);
+    }
   }, [id]);
 
-  async function handleStatusUpdate(newStatus: string) {
-    if (!booking) return;
+  useEffect(() => {
+    loadBooking();
+  }, [loadBooking]);
 
-    const confirmMessages: Record<string, string> = {
-      CONFIRMED: "ยืนยันการจองนี้?",
-      COMPLETED: "เปลี่ยนสถานะเป็นเสร็จสิ้น?",
-      CANCELLED: "ยกเลิกการจองนี้?",
-    };
+  // Slots depend on the date and the selected services
+  useEffect(() => {
+    if (!form?.date) return;
 
-    if (!confirm(confirmMessages[newStatus] || "ดำเนินการต่อ?")) return;
+    setLoadingSlots(true);
+    const params = new URLSearchParams({ date: form.date, exclude: id });
+    if (form.serviceIds.length > 0) {
+      params.set("services", form.serviceIds.join(","));
+    }
 
-    setUpdating(newStatus);
-    setNotification("");
+    fetch(`/api/admin/slots?${params}`)
+      .then((res) => res.json())
+      .then((data) => {
+        setDateClosed(!!data.closed);
+        setClosedReason(data.reason || "");
+        setSlots(data.slots || []);
+      })
+      .catch(() => setSlots([]))
+      .finally(() => setLoadingSlots(false));
+  }, [form?.date, form?.serviceIds, id]);
+
+  function patch(p: Partial<BookingFormState>) {
+    setForm((prev) => (prev ? { ...prev, ...p } : prev));
+    setErrors({});
+  }
+
+  function validate(f: BookingFormState) {
+    const e: Record<string, string> = {};
+    if (!f.customerName.trim()) e.customerName = "กรุณากรอกชื่อ";
+    if (!/^0[0-9]{8,9}$/.test(f.customerPhone.trim())) {
+      e.customerPhone = "เบอร์โทรไม่ถูกต้อง";
+    }
+    if (!f.licensePlate.trim()) e.licensePlate = "กรุณากรอกทะเบียนรถ";
+    if (!f.carModelId) e.carModelId = "กรุณาเลือกรุ่นรถ";
+    if (f.carModelId === OTHER_MODEL && !f.carModelOther.trim()) {
+      e.carModelId = "กรุณาระบุรุ่นรถ";
+    }
+    if (f.serviceIds.length === 0) e.serviceIds = "กรุณาเลือกบริการ";
+    if (!f.timeSlotId) e.timeSlotId = "กรุณาเลือกเวลา";
+    return e;
+  }
+
+  async function save(confirmOverride = false) {
+    if (!form || !booking) return;
+
+    const e = validate(form);
+    if (Object.keys(e).length > 0) {
+      setErrors(e);
+      requestAnimationFrame(() => {
+        document
+          .querySelector(".field-error")
+          ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+      return;
+    }
+
+    setSaving(true);
+    const isOther = form.carModelId === OTHER_MODEL;
 
     try {
-      const res = await fetch(`/api/admin/bookings/${id}`, {
+      const res = await fetch(`/api/admin/bookings/${booking.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: newStatus, sendNotify }),
+        body: JSON.stringify({
+          customerName: form.customerName,
+          customerPhone: form.customerPhone,
+          licensePlate: form.licensePlate,
+          carModelId: isOther ? null : form.carModelId,
+          carModelOther: isOther ? form.carModelOther : undefined,
+          bodyNo: form.bodyNo,
+          mileage: Number(form.mileage) || 0,
+          date: form.date,
+          timeSlotId: form.timeSlotId,
+          serviceIds: form.serviceIds,
+          adminNote: form.adminNote,
+          status: form.status,
+          sendNotify,
+          confirmOverride,
+          updatedAt: booking.updatedAt, // optimistic lock
+        }),
       });
 
       const data = await res.json();
 
-      if (!res.ok) {
-        setNotification(`❌ ${data.error || "เกิดข้อผิดพลาด"}`);
+      if (res.status === 409 && data.code === "OVERRIDE_REQUIRED") {
+        setOverrideMessages(data.messages);
         return;
       }
 
-      setBooking({ ...booking, status: data.status });
-
-      if (!sendNotify) {
-        setNotification("✅ อัปเดตสถานะสำเร็จ — ไม่ส่งแจ้งเตือน");
-      } else if (data.lineNotified) {
-        setNotification("✅ อัปเดตสถานะสำเร็จ — แจ้งเตือน LINE แล้ว");
-      } else if (booking.lineUserId) {
-        setNotification("⚠️ อัปเดตสถานะสำเร็จ — แจ้งเตือน LINE ไม่สำเร็จ");
-      } else {
-        setNotification("✅ อัปเดตสถานะสำเร็จ — ลูกค้ายังไม่ได้เชื่อมต่อ LINE");
+      if (res.status === 409 && data.code === "STALE") {
+        toast.error(data.error, {
+          action: { label: "โหลดใหม่", onClick: () => location.reload() },
+          duration: 10000,
+        });
+        return;
       }
+
+      if (!res.ok) {
+        toast.error(data.error || "ไม่สามารถบันทึกได้");
+        return;
+      }
+
+      setOverrideMessages(null);
+      toast.success(
+        data.lineNotified ? "บันทึกแล้ว · แจ้งลูกค้าทาง LINE" : "บันทึกแล้ว",
+      );
+
+      await loadBooking();
     } catch {
-      setNotification("❌ ไม่สามารถอัปเดตสถานะได้");
+      toast.error("เชื่อมต่อไม่สำเร็จ");
     } finally {
-      setUpdating("");
+      setSaving(false);
     }
   }
 
-  async function handleSendNotify() {
-    if (!booking) return;
-    setSending(true);
-    setNotification("");
-
+  async function sendManual(trigger: string, label: string) {
+    setSendingManual(trigger);
     try {
       const res = await fetch(`/api/admin/bookings/${id}/notify`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ trigger }),
       });
       const data = await res.json();
 
-      if (!res.ok) {
-        setNotification(`❌ ${data.error}`);
-      } else {
-        setNotification("✅ ส่งแจ้งเตือน LINE สำเร็จ");
-      }
+      if (!res.ok) toast.error(data.error || "ส่งไม่สำเร็จ");
+      else toast.success(`ส่ง${label}แล้ว`);
     } catch {
-      setNotification("❌ ไม่สามารถส่งแจ้งเตือนได้");
+      toast.error("เชื่อมต่อไม่สำเร็จ");
     } finally {
-      setSending(false);
-    }
-  }
-
-  async function handleSendReminder() {
-    if (!booking) return;
-    setSendingReminder(true);
-    setNotification("");
-
-    try {
-      const res = await fetch(`/api/admin/bookings/${id}/notify`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ trigger: "REMINDER" }),
-      });
-      const data = await res.json();
-
-      if (!res.ok) {
-        setNotification(`❌ ${data.error}`);
-      } else {
-        setNotification("✅ ส่งเตือนนัดสำเร็จ");
-      }
-    } catch {
-      setNotification("❌ ไม่สามารถส่งเตือนนัดได้");
-    } finally {
-      setSendingReminder(false);
+      setSendingManual("");
     }
   }
 
@@ -210,266 +270,231 @@ export default function AdminBookingDetailPage() {
     );
   }
 
-  if (error || !booking) {
+  if (loadError || !booking || !form) {
     return (
       <div className="py-20 text-center">
         <AlertCircle className="mx-auto mb-3 h-8 w-8 text-status-cancelled" />
-        <p className="text-sm text-text-muted">{error}</p>
-        <Link href="/admin/bookings" className="btn-ghost mt-4 inline-flex">
-          <ArrowLeft className="h-4 w-4" />
-          กลับ
+        <p className="mb-4 text-sm text-text-muted">{loadError}</p>
+        <Link href="/admin/bookings" className="btn-ghost text-sm">
+          กลับไปรายการจอง
         </Link>
       </div>
     );
   }
 
-  const statusConfig = STATUS_CONFIG[booking.status] || STATUS_CONFIG.PENDING;
-  const actions = STATUS_ACTIONS[booking.status] || [];
+  const meta = statusMeta(booking.status);
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6">
-      {/* Back */}
-      <Link
-        href="/admin/bookings"
-        className="inline-flex items-center gap-2 text-sm text-text-muted transition-colors hover:text-text-heading"
-      >
-        <ArrowLeft className="h-4 w-4" />
-        กลับรายการจอง
-      </Link>
-
-      {/* Header — code + status */}
-      <div className="rounded-lg border border-border-light bg-primary-mid p-5">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <div className="text-data mb-2 text-2xl text-accent">
+    <div className="mx-auto max-w-3xl space-y-6 pb-24">
+      {/* Header */}
+      <div className="flex items-start gap-4">
+        <button
+          type="button"
+          onClick={() => router.push("/admin/bookings")}
+          className="mt-1 flex h-8 w-8 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-primary-light hover:text-text-heading"
+        >
+          <ArrowLeft className="h-4 w-4" />
+        </button>
+        <div className="flex-1">
+          <div className="mb-1 flex flex-wrap items-center gap-2">
+            <span className="text-data text-lg text-accent">
               {booking.bookingCode}
-            </div>
-            <span className={statusConfig.badge}>{statusConfig.label}</span>
+            </span>
+            <span className={meta.badge}>{meta.label}</span>
+            {readOnly && (
+              <span className="flex items-center gap-1 text-xs text-text-subtle">
+                <Lock className="h-3 w-3" />
+                แก้ไขได้เฉพาะผู้ดูแลระบบสูงสุด
+              </span>
+            )}
           </div>
+          <div className="text-xs text-text-muted">
+            จองเมื่อ{" "}
+            {format(new Date(booking.createdAt), "d MMM yyyy HH:mm", {
+              locale: th,
+            })}
+            {booking.createdByAdmin && ` · โดย ${booking.createdByAdmin}`}
+          </div>
+        </div>
 
-          {/* Status actions */}
-          {actions.length > 0 && (
-            <div className="flex flex-col items-end gap-2">
-              <div className="flex gap-2">
-                {actions.map((action) => (
-                  <button
-                    key={action.to}
-                    type="button"
-                    onClick={() => handleStatusUpdate(action.to)}
-                    disabled={!!updating}
-                    className={
-                      action.variant === "btn-cancel"
-                        ? "flex items-center gap-2 rounded-lg border border-status-cancelled/30 bg-status-cancelled/5 px-4 py-2 text-sm font-medium text-status-cancelled transition-all hover:bg-status-cancelled/10 disabled:opacity-50"
-                        : "btn-primary disabled:opacity-50"
-                    }
-                  >
-                    {updating === action.to ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : action.variant === "btn-cancel" ? null : (
-                      <Send className="h-4 w-4" />
-                    )}
-                    {action.label}
-                  </button>
-                ))}
-              </div>
-              <label className="flex cursor-pointer items-center gap-2 text-xs text-text-muted">
-                <input
-                  type="checkbox"
-                  checked={sendNotify}
-                  onChange={(e) => setSendNotify(e.target.checked)}
-                  className="sr-only"
-                />
-                <span className={`flex h-5 w-9 items-center rounded-full transition-colors ${sendNotify ? "bg-accent" : "bg-border"}`}>
-                  <span className={`h-3.5 w-3.5 rounded-full bg-white transition-transform ${sendNotify ? "translate-x-4.5" : "translate-x-0.5"}`} />
-                </span>
-                แจ้งเตือน LINE
-              </label>
-            </div>
+        <a
+          href={`tel:${booking.customerPhone}`}
+          className="btn-ghost text-sm"
+          title="โทรหาลูกค้า"
+        >
+          <Phone className="h-4 w-4" />
+          {booking.customerPhone}
+        </a>
+      </div>
+
+      {/* Customer note — read-only, written by the customer */}
+      {booking.customerNote && (
+        <div className="rounded-lg border border-border-light bg-primary p-4">
+          <div className="mb-1 text-[11px] text-text-muted">
+            หมายเหตุจากลูกค้า
+          </div>
+          <p className="text-sm whitespace-pre-wrap text-text">
+            {booking.customerNote}
+          </p>
+        </div>
+      )}
+
+      {/* Service timestamps */}
+      {(booking.serviceStartedAt || booking.completedAt) && (
+        <div className="flex flex-wrap gap-4 rounded-lg border border-border-light bg-primary p-4 text-xs text-text-muted">
+          {booking.serviceStartedAt && (
+            <span>
+              เริ่มบริการ{" "}
+              {format(new Date(booking.serviceStartedAt), "d MMM HH:mm", {
+                locale: th,
+              })}
+            </span>
+          )}
+          {booking.completedAt && (
+            <span>
+              เสร็จสิ้น{" "}
+              {format(new Date(booking.completedAt), "d MMM HH:mm", {
+                locale: th,
+              })}
+            </span>
           )}
         </div>
-      </div>
-
-      {/* Notification */}
-      {notification && (
-        <div
-          className={`rounded-lg p-3 text-sm ${
-            notification.startsWith("✅")
-              ? "bg-status-completed/5 text-status-completed"
-              : notification.startsWith("⚠️")
-                ? "bg-status-pending/5 text-status-pending"
-                : "bg-status-cancelled/5 text-status-cancelled"
-          }`}
-        >
-          {notification}
-        </div>
       )}
 
-      {/* Two columns: customer + appointment */}
-      <div className="grid gap-4 md:grid-cols-2">
-        {/* Customer info */}
-        <div className="rounded-lg border border-border-light bg-primary-mid p-5">
-          <h2 className="mb-4 text-xs font-medium text-text-muted uppercase tracking-wider">
-            ข้อมูลลูกค้า
-          </h2>
-          <div className="space-y-4">
-            <DetailRow icon={User} label="ชื่อ" value={booking.customerName} />
-            <DetailRow icon={Phone} label="เบอร์โทร" value={booking.customerPhone} />
-            <DetailRow icon={Car} label="ทะเบียนรถ" value={booking.licensePlate} mono />
-            <DetailRow icon={Gauge} label="เลขกิโลเมตร" value={`${booking.mileage.toLocaleString()} กม.`} mono />
-          </div>
-        </div>
+      {/* Form */}
+      <BookingForm
+        value={form}
+        onChange={patch}
+        services={services}
+        carModels={carModels}
+        slots={slots}
+        loadingSlots={loadingSlots}
+        dateClosed={dateClosed}
+        closedReason={closedReason}
+        errors={errors}
+        disabled={readOnly || saving}
+      />
 
-        {/* Appointment */}
-        <div className="rounded-lg border border-border-light bg-primary-mid p-5">
-          <h2 className="mb-4 text-xs font-medium text-text-muted uppercase tracking-wider">
-            นัดหมาย
-          </h2>
-          <div className="space-y-4">
-            <DetailRow
-              icon={Calendar}
-              label="วันที่"
-              value={format(new Date(booking.date), "EEEE d MMMM yyyy", { locale: th })}
-            />
-            <DetailRow
-              icon={Clock}
-              label="เวลา"
-              value={`${booking.timeBlock.label} (${booking.timeBlock.time})`}
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Services */}
+      {/* LINE */}
       <div className="rounded-lg border border-border-light bg-primary-mid p-5">
-        <h2 className="mb-3 text-xs font-medium text-text-muted uppercase tracking-wider">
-          รายการบริการ
-        </h2>
-        <div className="flex flex-wrap gap-2">
-          {booking.services.map((service) => (
-            <span
-              key={service.id}
-              className="flex items-center gap-1.5 rounded-md bg-primary-light px-3 py-1.5 text-sm text-text"
-            >
-              <Wrench className="h-3 w-3 text-accent" />
-              {service.name}
-            </span>
-          ))}
-        </div>
-      </div>
+        <h3 className="mb-3 text-xs font-medium tracking-wider text-text-muted uppercase">
+          การแจ้งเตือน
+        </h3>
 
-      {/* Notes */}
-      {booking.notes && (
-        <div className="rounded-lg border border-border-light bg-primary-mid p-5">
-          <h2 className="mb-3 text-xs font-medium text-text-muted uppercase tracking-wider">
-            หมายเหตุ
-          </h2>
-          <div className="flex items-start gap-2 text-sm text-text">
-            <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0 text-text-muted" />
-            {booking.notes}
-          </div>
-        </div>
-      )}
+        {booking.lineLinked ? (
+          <>
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-text">
+              <input
+                type="checkbox"
+                checked={sendNotify}
+                onChange={(e) => setSendNotify(e.target.checked)}
+                className="h-4 w-4 accent-[var(--color-accent)]"
+              />
+              แจ้งลูกค้าทาง LINE เมื่อบันทึก
+            </label>
+            <p className="mt-1 ml-6 text-[11px] text-text-subtle">
+              ส่งเมื่อสถานะหรือวัน/เวลาเปลี่ยนเท่านั้น
+            </p>
 
-      {/* LINE notification */}
-      <div className="rounded-lg border border-border-light bg-primary-mid p-5">
-        <h2 className="mb-4 text-xs font-medium text-text-muted uppercase tracking-wider">
-          การแจ้งเตือน LINE
-        </h2>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className={`flex h-8 w-8 items-center justify-center rounded-full ${booking.lineUserId ? "bg-status-completed/10" : "bg-primary-light"}`}>
-              <MessageCircle className={`h-4 w-4 ${booking.lineUserId ? "text-status-completed" : "text-text-subtle"}`} />
-            </div>
-            <div>
-              <div className="text-sm font-medium text-text-heading">
-                {booking.lineUserId ? "เชื่อมต่อแล้ว" : "ยังไม่ได้เชื่อมต่อ"}
-              </div>
-              <div className="text-xs text-text-muted">
-                {booking.lineUserId
-                  ? "สามารถส่งแจ้งเตือนได้"
-                  : "ลูกค้ายังไม่ได้เชื่อมต่อ LINE"}
-              </div>
-            </div>
-          </div>
-
-          {booking.lineUserId && (
-            <div className="flex gap-2">
+            <div className="mt-4 flex flex-wrap gap-2 border-t border-border pt-4">
               <button
                 type="button"
-                onClick={handleSendNotify}
-                disabled={sending || sendingReminder}
+                onClick={() => sendManual(booking.status, "แจ้งเตือน")}
+                disabled={!!sendingManual}
                 className="btn-tertiary text-xs"
               >
-                {sending ? (
+                {sendingManual === booking.status ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Send className="h-3.5 w-3.5" />
+                )}
+                ส่งสถานะปัจจุบันอีกครั้ง
+              </button>
+              <button
+                type="button"
+                onClick={() => sendManual("REMINDER", "แจ้งเตือนนัดหมาย")}
+                disabled={!!sendingManual}
+                className="btn-tertiary text-xs"
+              >
+                {sendingManual === "REMINDER" ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 ) : (
                   <Bell className="h-3.5 w-3.5" />
                 )}
-                ส่งแจ้งเตือน
+                ส่งแจ้งเตือนนัดหมาย
+              </button>
+            </div>
+          </>
+        ) : (
+          <p className="flex items-center gap-2 text-sm text-text-muted">
+            <MessageCircle className="h-4 w-4" />
+            ลูกค้ายังไม่ได้เชื่อมต่อ LINE
+          </p>
+        )}
+      </div>
+
+      {/* Save bar */}
+      {!readOnly && (
+        <div className="sticky bottom-0 -mx-6 border-t border-border-light bg-primary/90 px-6 py-4 backdrop-blur-xl">
+          <div className="flex items-center justify-between gap-4">
+            <Link href="/admin/bookings" className="btn-ghost text-sm">
+              ยกเลิก
+            </Link>
+            <button
+              type="button"
+              onClick={() => save(false)}
+              disabled={saving}
+              className="btn-primary"
+            >
+              {saving ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Save className="h-4 w-4" />
+              )}
+              บันทึก
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Override confirmation */}
+      {overrideMessages && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6">
+          <div className="w-full max-w-sm rounded-lg border border-border bg-primary-mid p-6">
+            <div className="mb-3 flex items-center gap-2 text-status-pending">
+              <AlertTriangle className="h-5 w-5" />
+              <h3 className="text-sm font-medium">ต้องการยืนยัน</h3>
+            </div>
+
+            <ul className="mb-5 space-y-2">
+              {overrideMessages.map((m) => (
+                <li key={m} className="text-sm text-text">
+                  {m}
+                </li>
+              ))}
+            </ul>
+
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setOverrideMessages(null)}
+                className="btn-ghost text-sm"
+              >
+                ยกเลิก
               </button>
               <button
                 type="button"
-                onClick={handleSendReminder}
-                disabled={sending || sendingReminder}
-                className="btn-tertiary text-xs"
+                onClick={() => save(true)}
+                disabled={saving}
+                className="btn-primary text-sm"
               >
-                {sendingReminder ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <CalendarClock className="h-3.5 w-3.5" />
-                )}
-                ส่งเตือนนัด
+                {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+                ยืนยัน
               </button>
             </div>
-          )}
+          </div>
         </div>
-      </div>
-
-      {/* Timestamps */}
-      <div className="text-center text-xs text-text-subtle">
-        สร้างเมื่อ{" "}
-        {format(new Date(booking.createdAt), "d MMM yyyy HH:mm", { locale: th })}
-        {booking.updatedAt !== booking.createdAt && (
-          <>
-            {" · "}อัปเดต{" "}
-            {format(new Date(booking.updatedAt), "d MMM yyyy HH:mm", { locale: th })}
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function DetailRow({
-  icon: Icon,
-  label,
-  value,
-  mono,
-  muted,
-}: {
-  icon: typeof User;
-  label: string;
-  value: string;
-  mono?: boolean;
-  muted?: boolean;
-}) {
-  return (
-    <div className="flex items-start gap-3">
-      <Icon className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
-      <div>
-        <div className="text-[11px] text-text-muted">{label}</div>
-        <div
-          className={`text-sm ${
-            muted
-              ? "text-text-subtle"
-              : mono
-                ? "text-data text-text-heading"
-                : "text-text-heading"
-          }`}
-        >
-          {value}
-        </div>
-      </div>
+      )}
     </div>
   );
 }
