@@ -6,25 +6,20 @@ import Link from "next/link";
 import { ArrowLeft, Loader2, Send } from "lucide-react";
 import ServicePicker from "./_components/ServicePicker";
 import DatePicker from "./_components/DatePicker";
-import TimeBlockPicker from "./_components/TimeBlockPicker";
-import CustomerForm from "./_components/CustomerForm";
+import TimeSlotPicker, { type Slot } from "./_components/TimeSlotPicker";
+import CustomerForm, {
+  OTHER_MODEL,
+  type CarModelOption,
+} from "./_components/CustomerForm";
 
 type Service = { id: string; name: string; description: string | null };
-type Slot = {
-  id: string;
-  label: string;
-  startTime: string;
-  endTime: string;
-  maxBookings: number;
-  currentBookings: number;
-  available: boolean;
-};
 
 export default function BookingPage() {
   const router = useRouter();
 
-  // Services
+  // Reference data
   const [services, setServices] = useState<Service[]>([]);
+  const [carModels, setCarModels] = useState<CarModelOption[]>([]);
   const [loadingServices, setLoadingServices] = useState(true);
 
   // Calendar config
@@ -36,17 +31,21 @@ export default function BookingPage() {
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [dateClosed, setDateClosed] = useState(false);
   const [closedReason, setClosedReason] = useState("");
+  const [noCommonSlots, setNoCommonSlots] = useState(false);
 
   // Form state
   const [selectedServices, setSelectedServices] = useState<string[]>([]);
   const [selectedDate, setSelectedDate] = useState("");
-  const [selectedTimeBlock, setSelectedTimeBlock] = useState("");
+  const [selectedSlot, setSelectedSlot] = useState("");
   const [customerFields, setCustomerFields] = useState({
     customerName: "",
     customerPhone: "",
     licensePlate: "",
+    carModelId: "",
+    carModelOther: "",
+    bodyNo: "",
     mileage: "",
-    notes: "",
+    customerNote: "",
   });
   const [honeypot, setHoneypot] = useState("");
 
@@ -55,23 +54,25 @@ export default function BookingPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
 
-  // Load services and day configs on mount
+  // Load reference data
   useEffect(() => {
     async function load() {
       try {
-        const [servicesRes, configRes] = await Promise.all([
+        const [servicesRes, configRes, modelsRes] = await Promise.all([
           fetch("/api/services"),
           fetch("/api/day-configs"),
+          fetch("/api/car-models"),
         ]);
+
         const servicesData = await servicesRes.json();
         const configData = await configRes.json();
+        const modelsData = await modelsRes.json();
 
         setServices(servicesData);
+        setCarModels(Array.isArray(modelsData) ? modelsData : []);
         setClosedDays(configData.closedDays || []);
         setClosedDates(
-          (configData.closedDates || []).map(
-            (d: { date: string }) => d.date
-          )
+          (configData.closedDates || []).map((d: { date: string }) => d.date),
         );
       } catch {
         setSubmitError("ไม่สามารถโหลดข้อมูลได้ กรุณารีเฟรชหน้า");
@@ -82,55 +83,56 @@ export default function BookingPage() {
     load();
   }, []);
 
-  // Fetch slots when date changes
+  // Available times depend on BOTH the date and the selected services,
+  // since a service can be restricted to certain slots.
   useEffect(() => {
     if (!selectedDate) {
       setSlots([]);
       setDateClosed(false);
+      setNoCommonSlots(false);
       return;
     }
 
-    setSelectedTimeBlock(""); // Reset time block
+    setSelectedSlot("");
     setLoadingSlots(true);
 
-    fetch(`/api/slots?date=${selectedDate}`)
+    const params = new URLSearchParams({ date: selectedDate });
+    if (selectedServices.length > 0) {
+      params.set("services", selectedServices.join(","));
+    }
+
+    fetch(`/api/slots?${params}`)
       .then((res) => res.json())
       .then((data) => {
-        if (data.closed) {
-          setDateClosed(true);
-          setClosedReason(data.reason || "");
-          setSlots([]);
-        } else {
-          setDateClosed(false);
-          setClosedReason("");
-          setSlots(data.slots || []);
-        }
+        setDateClosed(!!data.closed);
+        setClosedReason(data.reason || "");
+        setNoCommonSlots(!!data.noCommonSlots);
+        setSlots(data.slots || []);
       })
       .catch(() => {
         setSlots([]);
       })
-      .finally(() => {
-        setLoadingSlots(false);
-      });
-  }, [selectedDate]);
+      .finally(() => setLoadingSlots(false));
+  }, [selectedDate, selectedServices]);
+
+  function clearError(field: string) {
+    setErrors((prev) => {
+      if (!prev[field]) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+  }
 
   function handleCustomerChange(field: string, value: string) {
     setCustomerFields((prev) => ({ ...prev, [field]: value }));
-    // Clear field error on change
-    if (errors[field]) {
-      setErrors((prev) => {
-        const next = { ...prev };
-        delete next[field];
-        return next;
-      });
-    }
+    clearError(field);
   }
 
   async function handleSubmit() {
     setErrors({});
     setSubmitError("");
 
-    // Client-side validation
     const newErrors: Record<string, string> = {};
 
     if (selectedServices.length === 0) {
@@ -139,8 +141,8 @@ export default function BookingPage() {
     if (!selectedDate) {
       newErrors.date = "กรุณาเลือกวันนัดหมาย";
     }
-    if (!selectedTimeBlock) {
-      newErrors.timeBlockId = "กรุณาเลือกช่วงเวลา";
+    if (!selectedSlot) {
+      newErrors.timeSlotId = "กรุณาเลือกเวลา";
     }
     if (!customerFields.customerName.trim()) {
       newErrors.customerName = "กรุณากรอกชื่อ-นามสกุล";
@@ -150,24 +152,36 @@ export default function BookingPage() {
     } else if (!/^0[0-9]{8,9}$/.test(customerFields.customerPhone)) {
       newErrors.customerPhone = "เบอร์โทรไม่ถูกต้อง (เช่น 0812345678)";
     }
+    if (!customerFields.carModelId) {
+      newErrors.carModelId = "กรุณาเลือกรุ่นรถ";
+    } else if (
+      customerFields.carModelId === OTHER_MODEL &&
+      !customerFields.carModelOther.trim()
+    ) {
+      newErrors.carModelOther = "กรุณาระบุรุ่นรถ";
+    }
     if (!customerFields.licensePlate.trim()) {
       newErrors.licensePlate = "กรุณากรอกทะเบียนรถ";
     }
     if (!customerFields.mileage.trim()) {
       newErrors.mileage = "กรุณากรอกเลขกิโลเมตร";
-    } else if (isNaN(Number(customerFields.mileage)) || Number(customerFields.mileage) < 0) {
+    } else if (
+      isNaN(Number(customerFields.mileage)) ||
+      Number(customerFields.mileage) < 0
+    ) {
       newErrors.mileage = "เลขกิโลเมตรไม่ถูกต้อง";
     }
 
     if (Object.keys(newErrors).length > 0) {
       setErrors(newErrors);
-      // Scroll to first error
       const firstErrorField = document.querySelector(".field-error");
       firstErrorField?.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
 
     setSubmitting(true);
+
+    const isOther = customerFields.carModelId === OTHER_MODEL;
 
     try {
       const res = await fetch("/api/bookings", {
@@ -176,8 +190,14 @@ export default function BookingPage() {
         body: JSON.stringify({
           serviceIds: selectedServices,
           date: selectedDate,
-          timeBlockId: selectedTimeBlock,
-          ...customerFields,
+          timeSlotId: selectedSlot,
+          customerName: customerFields.customerName,
+          customerPhone: customerFields.customerPhone,
+          licensePlate: customerFields.licensePlate,
+          carModelId: isOther ? undefined : customerFields.carModelId,
+          carModelOther: isOther ? customerFields.carModelOther : undefined,
+          bodyNo: customerFields.bodyNo || undefined,
+          customerNote: customerFields.customerNote || undefined,
           mileage: parseInt(customerFields.mileage),
           _website: honeypot,
         }),
@@ -188,20 +208,26 @@ export default function BookingPage() {
       if (!res.ok) {
         if (data.errors) {
           const fieldErrors: Record<string, string> = {};
-          data.errors.forEach(
-            (e: { field: string; message: string }) => {
-              fieldErrors[e.field] = e.message;
-            }
-          );
+          data.errors.forEach((e: { field: string; message: string }) => {
+            fieldErrors[e.field] = e.message;
+          });
           setErrors(fieldErrors);
         } else {
           setSubmitError(data.error || "เกิดข้อผิดพลาด กรุณาลองใหม่");
+
+          // 409 = the slot was taken while the form was open
+          if (res.status === 409) {
+            setSelectedSlot("");
+            setSelectedDate((d) => d); // triggers a slot refresh
+          }
         }
         return;
       }
 
-      // Success — redirect to confirmation page
-      router.push(`/booking/success?code=${data.bookingCode}`);
+      // The token is the secret link, not the booking code.
+      router.push(
+        `/booking/success?token=${encodeURIComponent(data.accessToken)}`,
+      );
     } catch {
       setSubmitError("ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้ กรุณาลองใหม่");
     } finally {
@@ -249,13 +275,7 @@ export default function BookingPage() {
                 selected={selectedServices}
                 onChange={(ids) => {
                   setSelectedServices(ids);
-                  if (errors.serviceIds) {
-                    setErrors((prev) => {
-                      const next = { ...prev };
-                      delete next.serviceIds;
-                      return next;
-                    });
-                  }
+                  clearError("serviceIds");
                 }}
                 error={errors.serviceIds}
               />
@@ -263,7 +283,7 @@ export default function BookingPage() {
 
             <div className="hr-gradient" />
 
-            {/* 2. Date */}
+            {/* 2. Date and time */}
             <section>
               <div className="section-label mb-1">02</div>
               <h2 className="section-heading mb-4 text-lg">เลือกวันและเวลา</h2>
@@ -272,48 +292,39 @@ export default function BookingPage() {
                   value={selectedDate}
                   onChange={(date) => {
                     setSelectedDate(date);
-                    if (errors.date) {
-                      setErrors((prev) => {
-                        const next = { ...prev };
-                        delete next.date;
-                        return next;
-                      });
-                    }
+                    clearError("date");
                   }}
                   closedDays={closedDays}
                   closedDates={closedDates}
                   error={errors.date}
                 />
-                <TimeBlockPicker
+                <TimeSlotPicker
                   slots={slots}
-                  selected={selectedTimeBlock}
+                  selected={selectedSlot}
                   onChange={(id) => {
-                    setSelectedTimeBlock(id);
-                    if (errors.timeBlockId) {
-                      setErrors((prev) => {
-                        const next = { ...prev };
-                        delete next.timeBlockId;
-                        return next;
-                      });
-                    }
+                    setSelectedSlot(id);
+                    clearError("timeSlotId");
                   }}
                   loading={loadingSlots}
                   closed={dateClosed}
                   closedReason={closedReason}
-                  error={errors.timeBlockId}
+                  noCommonSlots={noCommonSlots}
+                  hasDate={!!selectedDate}
+                  error={errors.timeSlotId}
                 />
               </div>
             </section>
 
             <div className="hr-gradient" />
 
-            {/* 3. Customer Info */}
+            {/* 3. Customer info */}
             <section>
               <div className="section-label mb-1">03</div>
               <h2 className="section-heading mb-4 text-lg">ข้อมูลของคุณ</h2>
               <div className="max-w-md">
                 <CustomerForm
                   values={customerFields}
+                  carModels={carModels}
                   onChange={handleCustomerChange}
                   errors={errors}
                 />
@@ -323,7 +334,10 @@ export default function BookingPage() {
             <div className="hr-gradient" />
 
             {/* Honeypot — hidden from humans, bots fill it */}
-            <div className="absolute -left-[9999px] opacity-0" aria-hidden="true">
+            <div
+              className="absolute -left-[9999px] opacity-0"
+              aria-hidden="true"
+            >
               <label htmlFor="_website">Website</label>
               <input
                 id="_website"
