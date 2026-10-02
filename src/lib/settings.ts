@@ -5,14 +5,20 @@ import { prisma } from "@/lib/prisma";
  * Defaults here are the fallback when a row is missing, so a fresh or
  * partially seeded database still behaves sensibly.
  */
-export const SETTING_DEFAULTS = {
+/** The shape of the settings — declared, not inferred, so values widen. */
+export type Settings = {
+  booking_lead_hours: number;
+  booking_max_days: number;
+  require_body_no: boolean;
+};
+
+export type SettingKey = keyof Settings;
+
+export const SETTING_DEFAULTS: Settings = {
   booking_lead_hours: 2,
   booking_max_days: 60,
   require_body_no: false,
-} as const;
-
-export type SettingKey = keyof typeof SETTING_DEFAULTS;
-export type Settings = { [K in SettingKey]: (typeof SETTING_DEFAULTS)[K] };
+};
 
 function parse<K extends SettingKey>(
   key: K,

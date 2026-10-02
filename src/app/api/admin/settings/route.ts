@@ -40,7 +40,7 @@ export async function PATCH(request: NextRequest) {
       const raw = body[key];
 
       if (key === "require_body_no") {
-        const value = !!raw;
+        const value = raw === true || raw === "true" || raw === 1;
         if (value !== before[key]) {
           await setSetting(key, value);
           changes[key] = { from: before[key], to: value };
