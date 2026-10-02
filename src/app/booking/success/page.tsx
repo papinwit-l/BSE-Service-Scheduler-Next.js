@@ -10,7 +10,6 @@ import {
   MessageCircle,
   Loader2,
   AlertCircle,
-  UserPlus,
 } from "lucide-react";
 import { useState, useEffect, Suspense } from "react";
 import LineQR from "@/components/ui/LineQR";
@@ -18,33 +17,37 @@ import LineQR from "@/components/ui/LineQR";
 function SuccessContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const bookingCode = searchParams.get("code");
-  const lineParam = searchParams.get("line"); // only used for flash message
 
+  // The token is the secret handle for this booking. The booking code is
+  // shown to the customer but never used to fetch anything.
+  const token = searchParams.get("token");
+  const lineParam = searchParams.get("line");
+
+  const [bookingCode, setBookingCode] = useState("");
   const [copied, setCopied] = useState(false);
   const [verified, setVerified] = useState(false);
   const [lineLinked, setLineLinked] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  // Verify booking code and check LINE status from database
   useEffect(() => {
-    if (!bookingCode) {
+    if (!token) {
       router.replace("/booking");
       return;
     }
 
-    fetch(`/api/bookings/status?code=${bookingCode}`)
+    fetch(`/api/bookings/status?token=${encodeURIComponent(token)}`)
       .then((res) => {
         if (!res.ok) throw new Error();
         return res.json();
       })
       .then((data) => {
         setVerified(true);
+        setBookingCode(data.bookingCode);
         setLineLinked(!!data.lineLinked);
       })
       .catch(() => setVerified(false))
       .finally(() => setLoading(false));
-  }, [bookingCode, router]);
+  }, [token, router]);
 
   function handleCopy() {
     if (!bookingCode) return;
@@ -54,7 +57,7 @@ function SuccessContent() {
   }
 
   function handleLineConnect() {
-    window.location.href = `/api/line-login?bookingId=${bookingCode}`;
+    window.location.href = `/api/line-login?token=${encodeURIComponent(token ?? "")}`;
   }
 
   if (loading) {
@@ -66,16 +69,16 @@ function SuccessContent() {
     );
   }
 
-  if (!verified || !bookingCode) {
+  if (!verified || !token) {
     return (
       <div className="flex min-h-screen items-center justify-center px-6">
         <div className="w-full max-w-sm text-center">
           <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-status-cancelled/10">
             <AlertCircle className="h-6 w-6 text-status-cancelled" />
           </div>
-          <h1 className="section-heading mb-2 text-lg">ไม่พบรหัสจอง</h1>
+          <h1 className="section-heading mb-2 text-lg">ไม่พบข้อมูลการจอง</h1>
           <p className="mb-6 text-sm text-text-muted">
-            รหัสจองไม่ถูกต้องหรือไม่มีอยู่ในระบบ
+            ลิงก์ไม่ถูกต้องหรือหมดอายุ
           </p>
           <Link href="/booking" className="btn-primary inline-flex">
             จองคิวใหม่
@@ -88,7 +91,6 @@ function SuccessContent() {
   return (
     <div className="flex min-h-screen items-center justify-center px-6">
       <div className="w-full max-w-md text-center">
-        {/* Success icon */}
         <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-status-completed/10">
           <CheckCircle className="h-8 w-8 text-status-completed" />
         </div>
@@ -114,13 +116,13 @@ function SuccessContent() {
 
         {/* Status */}
         <div className="mt-4 rounded-lg border border-border bg-primary p-4 text-left">
-          <span className="badge-pending">รอดำเนินการ</span>
+          <span className="badge-pending">รอยืนยัน</span>
           <p className="mt-3 text-xs leading-relaxed text-text-muted">
-            ทางศูนย์บริการจะยืนยันการจองของคุณภายใน 24 ชั่วโมง
+            ทางศูนย์บริการจะติดต่อกลับเพื่อยืนยันการจองของคุณ
           </p>
         </div>
 
-        {/* LINE Connect */}
+        {/* LINE */}
         <div className="mt-4 rounded-lg border border-border bg-primary p-4">
           {lineLinked ? (
             <div className="space-y-3">
@@ -129,7 +131,7 @@ function SuccessContent() {
                 เชื่อมต่อ LINE สำเร็จ
               </div>
               <div className="border-t border-border pt-3">
-                <p className="mb-3 text-xs text-text-muted text-center">
+                <p className="mb-3 text-center text-xs text-text-muted">
                   เพิ่มเพื่อน LINE เพื่อให้แน่ใจว่าจะได้รับแจ้งเตือน
                 </p>
                 <LineQR />
@@ -154,7 +156,7 @@ function SuccessContent() {
                 </p>
               )}
               <div className="border-t border-border pt-3">
-                <p className="mb-3 text-xs text-text-muted text-center">
+                <p className="mb-3 text-center text-xs text-text-muted">
                   หรือเพิ่มเพื่อน LINE
                 </p>
                 <LineQR />
@@ -166,7 +168,7 @@ function SuccessContent() {
         {/* Actions */}
         <div className="mt-8 flex flex-col gap-3">
           <Link
-            href={`/status/${bookingCode}`}
+            href={`/status/${encodeURIComponent(token)}`}
             className="btn-primary justify-center"
           >
             <Search className="h-4 w-4" />
@@ -177,6 +179,11 @@ function SuccessContent() {
             กลับหน้าหลัก
           </Link>
         </div>
+
+        <p className="mt-6 text-[11px] leading-relaxed text-text-subtle">
+          บันทึกลิงก์หน้านี้ไว้เพื่อตรวจสอบสถานะได้ทันที
+          หรือใช้รหัสจองคู่กับเบอร์โทรที่หน้าตรวจสอบสถานะ
+        </p>
       </div>
     </div>
   );

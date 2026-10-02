@@ -1,88 +1,99 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { requireAdmin, authErrorResponse } from "@/lib/guards";
+import { toDateOnly, toDateStr } from "@/lib/date";
 
+/**
+ * GET /api/admin/calendar?month=2026-10
+ *
+ * Month view: per-day booking counts, per-slot usage, and closures.
+ */
 export async function GET(request: NextRequest) {
-  const session = await auth();
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   try {
-    const { searchParams } = new URL(request.url);
-    const month = searchParams.get("month"); // YYYY-MM
+    await requireAdmin();
 
-    const now = new Date();
-    const start = month
-      ? new Date(`${month}-01`)
-      : new Date(now.getFullYear(), now.getMonth(), 1);
-    const end = new Date(
-      start.getFullYear(),
-      start.getMonth() + 1,
-      0,
-      23,
-      59,
-      59,
-    );
+    const monthParam = new URL(request.url).searchParams.get("month");
+    const month = /^\d{4}-\d{2}$/.test(monthParam ?? "")
+      ? (monthParam as string)
+      : toDateStr(new Date()).slice(0, 7);
 
-    // Get all bookings for the month (non-cancelled)
-    const bookings = await prisma.booking.findMany({
-      where: {
-        date: { gte: start, lte: end },
-        status: { notIn: ["CANCELLED"] },
-      },
-      select: {
-        date: true,
-        timeBlockId: true,
-        status: true,
-      },
-    });
+    const start = toDateOnly(`${month}-01`);
+    const end = new Date(start);
+    end.setUTCMonth(end.getUTCMonth() + 1); // exclusive
 
-    // Get time blocks
-    const timeBlocks = await prisma.timeBlock.findMany({
-      where: { active: true },
-      orderBy: { sortOrder: "asc" },
-      select: {
-        id: true,
-        label: true,
-        startTime: true,
-        endTime: true,
-        maxBookings: true,
-      },
-    });
+    const [bookings, slots, dayConfigs, closedDates, closures] =
+      await Promise.all([
+        prisma.booking.findMany({
+          where: {
+            date: { gte: start, lt: end },
+            status: { not: "CANCELLED" },
+          },
+          select: {
+            date: true,
+            timeSlotId: true,
+            bookingTime: true,
+            status: true,
+          },
+        }),
+        prisma.timeSlot.findMany({
+          where: { active: true },
+          orderBy: { time: "asc" },
+          select: { id: true, time: true, period: true, capacity: true },
+        }),
+        prisma.dayConfig.findMany({
+          where: { isClosed: true },
+          select: { dayOfWeek: true },
+        }),
+        prisma.closedDate.findMany({
+          where: { date: { gte: start, lt: end } },
+          select: { date: true, reason: true },
+        }),
+        prisma.slotClosure.findMany({
+          where: { date: { gte: start, lt: end } },
+          select: { date: true, timeSlotId: true, reason: true },
+        }),
+      ]);
 
-    // Get closed days + closed dates
-    const dayConfigs = await prisma.dayConfig.findMany({
-      where: { isClosed: true },
-      select: { dayOfWeek: true },
-    });
+    // { "2026-10-15": { total: 4, slots: { <slotId>: 2 } } }
+    const days: Record<
+      string,
+      { total: number; slots: Record<string, number> }
+    > = {};
 
-    const closedDates = await prisma.closedDate.findMany({
-      where: {
-        date: { gte: start, lte: end },
-      },
-      select: { date: true, reason: true },
-    });
-
-    // Build day map: { "2026-08-13": { blockId: count } }
-    const dayMap: Record<string, Record<string, number>> = {};
     for (const b of bookings) {
-      const dateStr = b.date.toISOString().split("T")[0];
-      if (!dayMap[dateStr]) dayMap[dateStr] = {};
-      dayMap[dateStr][b.timeBlockId] =
-        (dayMap[dateStr][b.timeBlockId] || 0) + 1;
+      const key = toDateStr(b.date);
+      if (!days[key]) days[key] = { total: 0, slots: {} };
+      days[key].total += 1;
+      days[key].slots[b.timeSlotId] = (days[key].slots[b.timeSlotId] || 0) + 1;
     }
 
+    // { "2026-10-20": [<slotId>, …] }
+    const slotClosures: Record<string, string[]> = {};
+    for (const c of closures) {
+      const key = toDateStr(c.date);
+      if (!slotClosures[key]) slotClosures[key] = [];
+      slotClosures[key].push(c.timeSlotId);
+    }
+
+    const dailyCapacity = slots.reduce((sum, s) => sum + s.capacity, 0);
+
     return NextResponse.json({
-      timeBlocks,
+      month,
+      slots,
+      dailyCapacity,
       closedDays: dayConfigs.map((d) => d.dayOfWeek),
       closedDates: closedDates.map((d) => ({
-        date: d.date.toISOString().split("T")[0],
+        date: toDateStr(d.date),
         reason: d.reason,
       })),
-      bookingsByDay: dayMap,
+      slotClosures,
+      days,
     });
-  } catch {
+  } catch (err) {
+    const res = authErrorResponse(err);
+    if (res) return res;
+
+    console.error("[admin/calendar] failed", err);
     return NextResponse.json(
       { error: "ไม่สามารถโหลดข้อมูลได้" },
       { status: 500 },

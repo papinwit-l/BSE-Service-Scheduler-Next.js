@@ -3,74 +3,66 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import {
-  CalendarCheck,
-  Clock,
-  CheckCircle,
-  AlertCircle,
-  XCircle,
   Loader2,
-  ChevronRight,
-  Users,
+  CalendarCheck,
   CalendarDays,
-  Phone,
-  Car,
   Wrench,
+  Clock,
+  ChevronRight,
+  Car,
+  AlertCircle,
+  Plus,
 } from "lucide-react";
+import { format, differenceInCalendarDays } from "date-fns";
+import { th } from "date-fns/locale";
+import { statusMeta } from "@/lib/booking-status";
 
-type Stats = {
-  today: { total: number; pending: number; confirmed: number };
-  week: number;
-  all: {
-    total: number;
-    pending: number;
-    confirmed: number;
-    completed: number;
-    cancelled: number;
-  };
-};
-
-type TodayBooking = {
+type BookingRow = {
   id: string;
   bookingCode: string;
   customerName: string;
   customerPhone: string;
   licensePlate: string;
+  carModel: string;
+  date: string;
+  time: string;
   status: string;
-  timeBlock: { label: string; time: string };
+  serviceStartedAt: string | null;
   services: string[];
 };
 
-const STATUS_CONFIG: Record<
-  string,
-  { label: string; badge: string; icon: typeof CheckCircle }
-> = {
-  PENDING: { label: "รอดำเนินการ", badge: "badge-pending", icon: Clock },
-  CONFIRMED: {
-    label: "ยืนยันแล้ว",
-    badge: "badge-confirmed",
-    icon: CheckCircle,
-  },
-  COMPLETED: {
-    label: "เสร็จสิ้น",
-    badge: "badge-completed",
-    icon: CheckCircle,
-  },
-  CANCELLED: { label: "ยกเลิก", badge: "badge-cancelled", icon: XCircle },
+type DashboardData = {
+  today: string;
+  counts: {
+    today: number;
+    tomorrow: number;
+    thisWeek: number;
+    nextWeek: number;
+    pending: number;
+    inService: number;
+  };
+  ranges: {
+    today: string;
+    tomorrow: string;
+    thisWeekStart: string;
+    thisWeekEnd: string;
+    nextWeekStart: string;
+    nextWeekEnd: string;
+  };
+  todayBookings: BookingRow[];
+  tomorrowBookings: BookingRow[];
+  inService: BookingRow[];
 };
 
 export default function AdminDashboardPage() {
-  const [stats, setStats] = useState<Stats | null>(null);
-  const [todayBookings, setTodayBookings] = useState<TodayBooking[]>([]);
+  const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     fetch("/api/admin/dashboard")
       .then((res) => res.json())
-      .then((data) => {
-        setStats(data.stats);
-        setTodayBookings(data.todayBookings || []);
-      })
-      .catch(() => {})
+      .then(setData)
+      .catch(() => setData(null))
       .finally(() => setLoading(false));
   }, []);
 
@@ -83,197 +75,254 @@ export default function AdminDashboardPage() {
     );
   }
 
+  if (!data) {
+    return (
+      <div className="py-20 text-center">
+        <AlertCircle className="mx-auto mb-3 h-8 w-8 text-status-cancelled" />
+        <p className="text-sm text-text-muted">ไม่สามารถโหลดข้อมูลได้</p>
+      </div>
+    );
+  }
+
+  // Each card links to the booking list, pre-filtered
+  const cards = [
+    {
+      label: "วันนี้",
+      count: data.counts.today,
+      href: `/admin/bookings?date=${data.ranges.today}`,
+      icon: CalendarCheck,
+      accent: true,
+    },
+    {
+      label: "พรุ่งนี้",
+      count: data.counts.tomorrow,
+      href: `/admin/bookings?date=${data.ranges.tomorrow}`,
+      icon: CalendarDays,
+    },
+    {
+      label: "สัปดาห์นี้",
+      count: data.counts.thisWeek,
+      href: `/admin/bookings?from=${data.ranges.thisWeekStart}&to=${data.ranges.thisWeekEnd}`,
+      icon: CalendarDays,
+    },
+    {
+      label: "สัปดาห์หน้า",
+      count: data.counts.nextWeek,
+      href: `/admin/bookings?from=${data.ranges.nextWeekStart}&to=${data.ranges.nextWeekEnd}`,
+      icon: CalendarDays,
+    },
+  ];
+
   return (
     <div className="mx-auto max-w-5xl space-y-8">
       {/* Header */}
-      <div>
-        <div className="section-label mb-1">ภาพรวม</div>
-        <h1 className="section-heading text-2xl">แดชบอร์ด</h1>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="section-label mb-1">ภาพรวม</div>
+          <h1 className="section-heading text-2xl">แดชบอร์ด</h1>
+          <p className="mt-1 text-xs text-text-muted">
+            {format(new Date(data.today), "EEEEที่ d MMMM yyyy", {
+              locale: th,
+            })}
+          </p>
+        </div>
+        <Link href="/admin/bookings/new" className="btn-primary text-sm">
+          <Plus className="h-4 w-4" />
+          เพิ่มการจอง
+        </Link>
       </div>
 
-      {/* Stat cards */}
-      {stats && (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <StatCard
-            icon={CalendarCheck}
-            label="จองวันนี้"
-            value={stats.today.total}
-            accent
-          />
-          <StatCard
-            icon={Clock}
-            label="รอดำเนินการ"
-            value={stats.all.pending}
-            color="text-status-pending"
-          />
-          <StatCard
-            icon={CalendarDays}
-            label="จองสัปดาห์นี้"
-            value={stats.week}
-          />
-          <StatCard icon={Users} label="จองทั้งหมด" value={stats.all.total} />
-        </div>
+      {/* Pending — needs a phone call */}
+      {data.counts.pending > 0 && (
+        <Link
+          href="/admin/bookings?status=PENDING"
+          className="flex items-center gap-3 rounded-lg border border-status-pending/20 bg-status-pending/5 p-4 transition-all hover:border-status-pending/40"
+        >
+          <Clock className="h-5 w-5 shrink-0 text-status-pending" />
+          <div className="flex-1">
+            <div className="text-sm font-medium text-status-pending">
+              มี {data.counts.pending} รายการรอยืนยัน
+            </div>
+            <div className="text-xs text-text-muted">
+              ติดต่อลูกค้าเพื่อยืนยันการจอง
+            </div>
+          </div>
+          <ChevronRight className="h-4 w-4 text-status-pending" />
+        </Link>
       )}
 
-      {/* All-time status summary */}
-      {stats && (
-        <div className="rounded-lg border border-border-light bg-primary-mid p-5">
-          <h2 className="mb-4 text-xs font-medium text-text-muted uppercase tracking-wider">
-            สรุปสถานะทั้งหมด
-          </h2>
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <MiniStat
-              label="รอดำเนินการ"
-              value={stats.all.pending}
-              color="text-status-pending"
-            />
-            <MiniStat
-              label="ยืนยันแล้ว"
-              value={stats.all.confirmed}
-              color="text-status-confirmed"
-            />
-            <MiniStat
-              label="เสร็จสิ้น"
-              value={stats.all.completed}
-              color="text-status-completed"
-            />
-            <MiniStat
-              label="ยกเลิก"
-              value={stats.all.cancelled}
-              color="text-status-cancelled"
-            />
-          </div>
-        </div>
-      )}
+      {/* Counts */}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        {cards.map((card) => {
+          const Icon = card.icon;
+          return (
+            <Link
+              key={card.label}
+              href={card.href}
+              className={`rounded-lg border p-4 transition-all hover:border-border ${
+                card.accent
+                  ? "border-accent-border bg-accent-subtle"
+                  : "border-border-light bg-primary-mid"
+              }`}
+            >
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-xs text-text-muted">{card.label}</span>
+                <Icon
+                  className={`h-3.5 w-3.5 ${
+                    card.accent ? "text-accent" : "text-text-subtle"
+                  }`}
+                />
+              </div>
+              <div
+                className={`text-data text-2xl ${
+                  card.accent ? "text-accent" : "text-text-heading"
+                }`}
+              >
+                {card.count}
+              </div>
+            </Link>
+          );
+        })}
+      </div>
 
-      {/* Today's bookings */}
-      <div>
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="section-heading text-lg">รายการจองวันนี้</h2>
-          <Link
-            href="/admin/bookings"
-            className="flex items-center gap-1 text-sm text-accent transition-colors hover:text-accent-hover"
-          >
-            ดูทั้งหมด
-            <ChevronRight className="h-3.5 w-3.5" />
-          </Link>
-        </div>
-
-        {todayBookings.length === 0 ? (
-          <div className="rounded-lg border border-border-light bg-primary-mid p-8 text-center">
-            <CalendarCheck className="mx-auto mb-3 h-8 w-8 text-text-subtle" />
-            <p className="text-sm text-text-muted">ไม่มีรายการจองวันนี้</p>
+      {/* In service — cars in the shop, sometimes for days */}
+      {data.inService.length > 0 && (
+        <section>
+          <div className="mb-3 flex items-center gap-2">
+            <Wrench className="h-4 w-4 text-accent" />
+            <h2 className="section-heading text-base">
+              รถที่อยู่ระหว่างรับบริการ
+            </h2>
+            <span className="text-xs text-text-muted">
+              {data.inService.length} คัน
+            </span>
           </div>
-        ) : (
-          <div className="space-y-3">
-            {todayBookings.map((booking) => {
-              const statusConfig =
-                STATUS_CONFIG[booking.status] || STATUS_CONFIG.PENDING;
+          <div className="space-y-2">
+            {data.inService.map((b) => {
+              const days = b.serviceStartedAt
+                ? differenceInCalendarDays(
+                    new Date(),
+                    new Date(b.serviceStartedAt),
+                  )
+                : null;
 
               return (
                 <Link
-                  key={booking.id}
-                  href={`/admin/bookings/${booking.id}`}
-                  className="group flex items-start gap-4 rounded-lg border border-border-light bg-primary-mid p-4 transition-all hover:border-border"
+                  key={b.id}
+                  href={`/admin/bookings/${b.id}`}
+                  className="flex items-center gap-4 rounded-lg border border-border-light bg-primary-mid p-4 transition-all hover:border-border"
                 >
-                  {/* Time block */}
-                  <div className="flex h-12 w-14 shrink-0 flex-col items-center justify-center rounded-lg bg-primary-light text-center">
-                    <span className="text-xs font-medium text-accent">
-                      {booking.timeBlock.label}
-                    </span>
-                    <span className="font-mono text-[10px] text-text-muted">
-                      {booking.timeBlock.time}
-                    </span>
-                  </div>
-
-                  {/* Details */}
-                  <div className="flex-1 min-w-0">
-                    <div className="mb-1 flex items-center gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="mb-1 flex flex-wrap items-center gap-2">
                       <span className="text-data text-sm text-accent">
-                        {booking.bookingCode}
+                        {b.bookingCode}
                       </span>
-                      <span className={statusConfig.badge}>
-                        {statusConfig.label}
-                      </span>
-                    </div>
-
-                    <div className="mb-2 text-sm font-medium text-text-heading">
-                      {booking.customerName}
-                    </div>
-
-                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-muted">
-                      <span className="flex items-center gap-1">
-                        <Car className="h-3 w-3" />
-                        <span className="text-data">
-                          {booking.licensePlate}
+                      {days !== null && (
+                        <span
+                          className={`text-xs ${
+                            days >= 5
+                              ? "text-status-pending"
+                              : "text-text-muted"
+                          }`}
+                        >
+                          {days === 0 ? "เริ่มวันนี้" : `${days} วัน`}
                         </span>
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Phone className="h-3 w-3" />
-                        {booking.customerPhone}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Wrench className="h-3 w-3" />
-                        {booking.services.join(", ")}
-                      </span>
+                      )}
+                    </div>
+                    <div className="text-sm text-text-heading">
+                      {b.customerName}
+                    </div>
+                    <div className="mt-1 flex items-center gap-1 text-xs text-text-muted">
+                      <Car className="h-3 w-3" />
+                      <span className="text-data">{b.licensePlate}</span>
+                      <span className="text-text-subtle">·</span>
+                      {b.carModel}
                     </div>
                   </div>
-
-                  {/* Arrow */}
-                  <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-text-subtle transition-colors group-hover:text-text-muted" />
+                  <ChevronRight className="h-4 w-4 shrink-0 text-text-subtle" />
                 </Link>
               );
             })}
           </div>
+        </section>
+      )}
+
+      {/* Today's queue */}
+      <section>
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="section-heading text-base">คิววันนี้</h2>
+          <Link
+            href={`/admin/bookings?date=${data.ranges.today}`}
+            className="text-xs text-text-muted hover:text-accent"
+          >
+            ดูทั้งหมด
+          </Link>
+        </div>
+
+        {data.todayBookings.length === 0 ? (
+          <div className="rounded-lg border border-border-light bg-primary-mid p-8 text-center">
+            <CalendarCheck className="mx-auto mb-2 h-6 w-6 text-text-subtle" />
+            <p className="text-sm text-text-muted">ไม่มีคิววันนี้</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {data.todayBookings.map((b) => (
+              <QueueRow key={b.id} booking={b} />
+            ))}
+          </div>
         )}
-      </div>
+      </section>
+
+      {/* Tomorrow preview */}
+      {data.tomorrowBookings.length > 0 && (
+        <section>
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="section-heading text-base">คิวพรุ่งนี้</h2>
+            <Link
+              href={`/admin/bookings?date=${data.ranges.tomorrow}`}
+              className="text-xs text-text-muted hover:text-accent"
+            >
+              ดูทั้งหมด ({data.counts.tomorrow})
+            </Link>
+          </div>
+          <div className="space-y-2">
+            {data.tomorrowBookings.map((b) => (
+              <QueueRow key={b.id} booking={b} />
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }
 
-function StatCard({
-  icon: Icon,
-  label,
-  value,
-  accent,
-  color,
-}: {
-  icon: typeof CalendarCheck;
-  label: string;
-  value: number;
-  accent?: boolean;
-  color?: string;
-}) {
-  return (
-    <div className="rounded-lg border border-border-light bg-primary-mid p-5">
-      <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-primary-light">
-        <Icon
-          className={`h-4 w-4 ${accent ? "text-accent" : color || "text-text-muted"}`}
-        />
-      </div>
-      <div
-        className={`text-data text-2xl ${accent ? "text-accent" : color || "text-text-heading"}`}
-      >
-        {value}
-      </div>
-      <div className="mt-1 text-xs text-text-muted">{label}</div>
-    </div>
-  );
-}
+function QueueRow({ booking }: { booking: BookingRow }) {
+  const meta = statusMeta(booking.status);
 
-function MiniStat({
-  label,
-  value,
-  color,
-}: {
-  label: string;
-  value: number;
-  color: string;
-}) {
   return (
-    <div className="text-center">
-      <div className={`text-data text-xl ${color}`}>{value}</div>
-      <div className="mt-1 text-xs text-text-muted">{label}</div>
-    </div>
+    <Link
+      href={`/admin/bookings/${booking.id}`}
+      className="flex items-center gap-4 rounded-lg border border-border-light bg-primary-mid p-3 transition-all hover:border-border"
+    >
+      <div className="flex h-10 w-14 shrink-0 items-center justify-center rounded-md bg-primary-light">
+        <span className="text-data text-sm text-accent">{booking.time}</span>
+      </div>
+
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-medium text-text-heading">
+            {booking.customerName}
+          </span>
+          <span className={meta.badge}>{meta.label}</span>
+        </div>
+        <div className="mt-0.5 flex items-center gap-1 text-xs text-text-muted">
+          <span className="text-data">{booking.licensePlate}</span>
+          <span className="text-text-subtle">·</span>
+          {booking.services.join(", ")}
+        </div>
+      </div>
+
+      <ChevronRight className="h-4 w-4 shrink-0 text-text-subtle" />
+    </Link>
   );
 }

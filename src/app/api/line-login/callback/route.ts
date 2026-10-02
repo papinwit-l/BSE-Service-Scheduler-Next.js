@@ -5,53 +5,38 @@ import { prisma } from "@/lib/prisma";
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const code = searchParams.get("code");
-  const state = searchParams.get("state"); // bookingId
+  const state = searchParams.get("state"); // the booking's access token
   const error = searchParams.get("error");
 
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
 
-  // User denied or error
-  if (error || !code || !state) {
-    return NextResponse.redirect(
-      `${baseUrl}/booking/success?code=${state}&line=error`
+  const back = (status: "linked" | "error") =>
+    NextResponse.redirect(
+      `${baseUrl}/booking/success?token=${encodeURIComponent(state ?? "")}&line=${status}`,
     );
-  }
 
-  // Exchange code for profile
+  if (error || !code || !state) return back("error");
+
   const profile = await exchangeLineCode(code);
+  if (!profile) return back("error");
 
-  if (!profile) {
-    return NextResponse.redirect(
-      `${baseUrl}/booking/success?code=${state}&line=error`
-    );
-  }
-
-  // Find booking and link lineUserId
   try {
-    const booking = await prisma.booking.findFirst({
-      where: {
-        OR: [
-          { id: state },
-          { bookingCode: state },
-        ],
-      },
+    // Look up by access token only. The previous version also matched on
+    // booking code, which is guessable.
+    const booking = await prisma.booking.findUnique({
+      where: { accessToken: state },
+      select: { id: true },
     });
 
-    if (booking) {
-      await prisma.booking.update({
-        where: { id: booking.id },
-        data: { lineUserId: profile.userId },
-      });
+    if (!booking) return back("error");
 
-      return NextResponse.redirect(
-        `${baseUrl}/booking/success?code=${booking.bookingCode}&line=linked`
-      );
-    }
+    await prisma.booking.update({
+      where: { id: booking.id },
+      data: { lineUserId: profile.userId },
+    });
+
+    return back("linked");
   } catch {
-    // Fall through to error redirect
+    return back("error");
   }
-
-  return NextResponse.redirect(
-    `${baseUrl}/booking/success?code=${state}&line=error`
-  );
 }

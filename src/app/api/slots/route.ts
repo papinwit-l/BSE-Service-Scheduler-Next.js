@@ -1,81 +1,42 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { getAvailability } from "@/lib/availability";
 
+/**
+ * GET /api/slots?date=2026-10-15&services=id1,id2
+ *
+ * Public: returns only slots the customer can actually book.
+ * The slot list depends on the selected services, so the client must
+ * re-fetch whenever the service selection changes.
+ */
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const dateStr = searchParams.get("date");
 
     if (!dateStr) {
-      return NextResponse.json(
-        { error: "กรุณาระบุวันที่" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "กรุณาระบุวันที่" }, { status: 400 });
     }
 
-    const date = new Date(dateStr);
-    const dayOfWeek = date.getDay(); // 0=Sun, 6=Sat
+    const serviceIds =
+      searchParams.get("services")?.split(",").filter(Boolean) ?? [];
 
-    // Check if this day is closed (weekly config)
-    const dayConfig = await prisma.dayConfig.findUnique({
-      where: { dayOfWeek },
+    const result = await getAvailability({ dateStr, serviceIds });
+
+    return NextResponse.json({
+      closed: result.closed,
+      reason: result.reason ?? null,
+      noCommonSlots: result.noCommonSlots ?? false,
+      slots: result.slots.map((s) => ({
+        id: s.id,
+        time: s.time,
+        period: s.period,
+        remaining: Math.max(0, s.capacity - s.booked),
+      })),
     });
-
-    if (dayConfig?.isClosed) {
-      return NextResponse.json({ closed: true, reason: "วันหยุดประจำสัปดาห์", slots: [] });
-    }
-
-    // Check if this specific date is closed (holidays)
-    const closedDate = await prisma.closedDate.findUnique({
-      where: { date },
-    });
-
-    if (closedDate) {
-      return NextResponse.json({
-        closed: true,
-        reason: closedDate.reason || "วันหยุด",
-        slots: [],
-      });
-    }
-
-    // Get active time blocks with booking count for this date
-    const timeBlocks = await prisma.timeBlock.findMany({
-      where: { active: true },
-      orderBy: { sortOrder: "asc" },
-      select: {
-        id: true,
-        label: true,
-        startTime: true,
-        endTime: true,
-        maxBookings: true,
-        _count: {
-          select: {
-            bookings: {
-              where: {
-                date,
-                status: { notIn: ["CANCELLED"] },
-              },
-            },
-          },
-        },
-      },
-    });
-
-    const slots = timeBlocks.map((block) => ({
-      id: block.id,
-      label: block.label,
-      startTime: block.startTime,
-      endTime: block.endTime,
-      maxBookings: block.maxBookings,
-      currentBookings: block._count.bookings,
-      available: block._count.bookings < block.maxBookings,
-    }));
-
-    return NextResponse.json({ closed: false, slots });
   } catch {
     return NextResponse.json(
       { error: "ไม่สามารถโหลดช่วงเวลาได้" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

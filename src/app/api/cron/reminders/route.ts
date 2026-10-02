@@ -1,14 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { sendStatusUpdate } from "@/lib/line";
+import { sendNotification } from "@/lib/line";
+import { logSystemAudit } from "@/lib/audit";
+import { addDaysStr, bangkokTodayStr, toDateOnly, toDateStr } from "@/lib/date";
 
 /**
- * Cron job: Send reminders for tomorrow's bookings
- * Runs daily at 8:00 AM (UTC+7 = 1:00 AM UTC)
- * Secured with CRON_SECRET
+ * GET /api/cron/reminders
+ *
+ * Sends tomorrow's appointment reminders. Scheduled daily.
+ *
+ * "Tomorrow" is calculated in Bangkok time explicitly. The previous version
+ * used the server's local midnight, which only produced the right day
+ * because the job happened to run at 01:00 UTC.
  */
 export async function GET(request: NextRequest) {
-  // Verify cron secret
   const authHeader = request.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;
 
@@ -17,44 +22,21 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // Check if REMINDER template is active
-    const template = await prisma.notificationTemplate.findUnique({
-      where: { trigger: "REMINDER" },
-    });
+    const tomorrowStr = addDaysStr(bangkokTodayStr(), 1);
 
-    if (!template?.active) {
-      return NextResponse.json({
-        message: "Reminder notifications are disabled",
-        sent: 0,
-      });
-    }
-
-    // Get tomorrow's date range (UTC)
-    const now = new Date();
-    const tomorrow = new Date(now);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    tomorrow.setHours(0, 0, 0, 0);
-
-    const dayAfter = new Date(tomorrow);
-    dayAfter.setDate(dayAfter.getDate() + 1);
-
-    // Find bookings for tomorrow that:
-    // - have LINE connected
-    // - are CONFIRMED or PENDING
-    // - haven't been reminded yet
     const bookings = await prisma.booking.findMany({
       where: {
-        date: { gte: tomorrow, lt: dayAfter },
+        date: toDateOnly(tomorrowStr),
+        // Reminders are for arrivals: cars already in service, finished
+        // or cancelled don't need one.
         status: { in: ["PENDING", "CONFIRMED"] },
         lineUserId: { not: null },
         reminderSent: false,
       },
       include: {
-        timeBlock: true,
-        bookingServices: {
-          include: { service: true },
-        },
+        bookingServices: { include: { service: { select: { name: true } } } },
       },
+      orderBy: { bookingTime: "asc" },
     });
 
     let sent = 0;
@@ -63,39 +45,41 @@ export async function GET(request: NextRequest) {
     for (const booking of bookings) {
       if (!booking.lineUserId) continue;
 
-      const success = await sendStatusUpdate(booking.lineUserId, {
+      const ok = await sendNotification(booking.lineUserId, "REMINDER", {
         bookingCode: booking.bookingCode,
-        status: "REMINDER",
         customerName: booking.customerName,
-        date: booking.date.toISOString().split("T")[0],
-        timeBlock: `${booking.timeBlock.label} (${booking.timeBlock.startTime}–${booking.timeBlock.endTime})`,
+        date: toDateStr(booking.date),
+        time: booking.bookingTime,
         services: booking.bookingServices.map((bs) => bs.service.name),
       });
 
-      if (success) {
-        // Mark as reminded
+      if (ok) {
+        sent++;
+        // Only mark as sent on success, so a failure is retried tomorrow…
+        // which is too late. Failures are logged for the admin to see.
         await prisma.booking.update({
           where: { id: booking.id },
           data: { reminderSent: true },
         });
-        sent++;
       } else {
         failed++;
+        await logSystemAudit("NOTIFICATION_FAILED", {
+          entityType: "Booking",
+          entityId: booking.id,
+          entityLabel: booking.bookingCode,
+          changes: { trigger: "REMINDER" },
+        });
       }
     }
 
     return NextResponse.json({
-      message: `Reminders processed`,
+      date: tomorrowStr,
       total: bookings.length,
       sent,
       failed,
-      date: tomorrow.toISOString().split("T")[0],
     });
-  } catch (error) {
-    console.error("Cron reminder error:", error);
-    return NextResponse.json(
-      { error: "Failed to process reminders" },
-      { status: 500 }
-    );
+  } catch (err) {
+    console.error("[cron/reminders] failed", err);
+    return NextResponse.json({ error: "Reminder job failed" }, { status: 500 });
   }
 }

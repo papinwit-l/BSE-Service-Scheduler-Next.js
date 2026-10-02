@@ -1,6 +1,3 @@
-// ─── BSE Booking System ───
-// Prisma 6 schema for MySQL (cPanel)
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -12,54 +9,95 @@ datasource db {
 
 // ─── Admin ───
 model Admin {
-  id        String   @id @default(cuid()) @db.VarChar(30)
-  email     String   @unique @db.VarChar(100)
-  password  String   @db.VarChar(100)
-  name      String   @db.VarChar(100)
-  createdAt DateTime @default(now()) @map("created_at")
+  id                 String    @id @default(cuid()) @db.VarChar(30)
+  email              String    @unique @db.VarChar(100)
+  password           String    @db.VarChar(100)
+  name               String    @db.VarChar(100)
+  role               AdminRole @default(ADMIN)
+  active             Boolean   @default(true)
+  mustChangePassword Boolean   @default(true) @map("must_change_password")
+  lastLoginAt        DateTime? @map("last_login_at")
+  createdById        String?   @map("created_by_id") @db.VarChar(30)
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
 
+  createdBy       Admin?     @relation("AdminCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAdmins   Admin[]    @relation("AdminCreator")
+  createdBookings Booking[]
+  auditLogs       AuditLog[]
+
+  @@index([active])
   @@map("admins")
+}
+
+enum AdminRole {
+  ROOT
+  ADMIN
 }
 
 // ─── Service ───
 model Service {
-  id          String   @id @default(cuid()) @db.VarChar(30)
-  name        String   @db.VarChar(100)
-  description String?  @db.Text
-  active      Boolean  @default(true)
-  sortOrder   Int      @default(0) @map("sort_order")
-  createdAt   DateTime @default(now()) @map("created_at")
+  id            String   @id @default(cuid()) @db.VarChar(30)
+  name          String   @db.VarChar(100)
+  description   String?  @db.Text
+  active        Boolean  @default(true)
+  sortOrder     Int      @default(0) @map("sort_order")
+  // false = bookable in every active slot
+  // true  = bookable only in slots linked via ServiceTimeSlot
+  restrictSlots Boolean  @default(false) @map("restrict_slots")
+  createdAt     DateTime @default(now()) @map("created_at")
 
-  bookingServices BookingService[]
+  bookingServices  BookingService[]
+  serviceTimeSlots ServiceTimeSlot[]
 
   @@map("services")
 }
 
-// ─── TimeBlock ───
-model TimeBlock {
-  id          String  @id @default(cuid()) @db.VarChar(30)
-  label       String  @db.VarChar(50)
-  startTime   String  @map("start_time") @db.VarChar(10)
-  endTime     String  @map("end_time") @db.VarChar(10)
-  maxBookings Int     @default(5) @map("max_bookings")
-  sortOrder   Int     @default(0) @map("sort_order")
-  active      Boolean @default(true)
+// ─── TimeSlot ───
+// Fixed 30-minute shifts. `time` is immutable after creation —
+// to change a time, deactivate the slot and add a new one.
+model TimeSlot {
+  id       String     @id @default(cuid()) @db.VarChar(30)
+  time     String     @unique @db.VarChar(5) // "09:00", zero-padded
+  period   SlotPeriod
+  capacity Int        @default(1)
+  active   Boolean    @default(true)
 
-  bookings Booking[]
+  bookings         Booking[]
+  serviceTimeSlots ServiceTimeSlot[]
+  closures         SlotClosure[]
 
-  @@map("time_blocks")
+  @@map("time_slots")
+}
+
+enum SlotPeriod {
+  MORNING
+  AFTERNOON
+}
+
+// ─── ServiceTimeSlot ───
+// Only consulted when Service.restrictSlots = true
+model ServiceTimeSlot {
+  serviceId  String @map("service_id") @db.VarChar(30)
+  timeSlotId String @map("time_slot_id") @db.VarChar(30)
+
+  service  Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  timeSlot TimeSlot @relation(fields: [timeSlotId], references: [id], onDelete: Cascade)
+
+  @@id([serviceId, timeSlotId])
+  @@map("service_time_slots")
 }
 
 // ─── DayConfig ───
 model DayConfig {
   id        String  @id @default(cuid()) @db.VarChar(30)
-  dayOfWeek Int     @unique @map("day_of_week")
+  dayOfWeek Int     @unique @map("day_of_week") // 0 = Sunday
   isClosed  Boolean @default(false) @map("is_closed")
 
   @@map("day_configs")
 }
 
-// ─── ClosedDate ───
+// ─── ClosedDate ─── (whole day closed)
 model ClosedDate {
   id     String   @id @default(cuid()) @db.VarChar(30)
   date   DateTime @unique @db.Date
@@ -68,30 +106,93 @@ model ClosedDate {
   @@map("closed_dates")
 }
 
+// ─── SlotClosure ─── (one slot closed on one date)
+model SlotClosure {
+  id         String   @id @default(cuid()) @db.VarChar(30)
+  date       DateTime @db.Date
+  timeSlotId String   @map("time_slot_id") @db.VarChar(30)
+  reason     String?  @db.VarChar(200)
+
+  timeSlot TimeSlot @relation(fields: [timeSlotId], references: [id], onDelete: Cascade)
+
+  @@unique([date, timeSlotId])
+  @@map("slot_closures")
+}
+
+// ─── CarModel ───
+model CarModel {
+  id        String   @id @default(cuid()) @db.VarChar(30)
+  name      String   @unique @db.VarChar(100)
+  active    Boolean  @default(true)
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  bookings Booking[]
+
+  @@map("car_models")
+}
+
 // ─── Booking ───
 model Booking {
-  id            String        @id @default(cuid()) @db.VarChar(30)
-  bookingCode   String        @unique @map("booking_code") @db.VarChar(20)
-  customerName  String        @map("customer_name") @db.VarChar(100)
-  customerPhone String        @map("customer_phone") @db.VarChar(20)
-  licensePlate  String        @map("license_plate") @db.VarChar(20)
-  mileage       Int
-  date          DateTime      @db.Date
-  timeBlockId   String        @map("time_block_id") @db.VarChar(30)
-  status        BookingStatus @default(PENDING)
-  lineUserId    String?       @map("line_user_id") @db.VarChar(100)
-  notes         String?       @db.Text
-  reminderSent  Boolean       @default(false) @map("reminder_sent")
-  createdAt     DateTime      @default(now()) @map("created_at")
-  updatedAt     DateTime      @updatedAt @map("updated_at")
+  id            String @id @default(cuid()) @db.VarChar(30)
+  bookingCode   String @unique @map("booking_code") @db.VarChar(20) // BSE-2026-000001
+  // Secret for customer-facing links and LINE linking. The booking code is
+  // sequential and guessable, so it must never grant access on its own.
+  accessToken   String @unique @map("access_token") @db.VarChar(32)
 
-  timeBlock       TimeBlock        @relation(fields: [timeBlockId], references: [id])
+  customerName  String @map("customer_name") @db.VarChar(100)
+  customerPhone String @map("customer_phone") @db.VarChar(20)
+  licensePlate  String @map("license_plate") @db.VarChar(20)
+
+  // Snapshot of the chosen name, or free text when "อื่นๆ" was used
+  carModel      String  @map("car_model") @db.VarChar(100)
+  // null when the customer used "อื่นๆ"
+  carModelId    String? @map("car_model_id") @db.VarChar(30)
+  bodyNo        String? @map("body_no") @db.VarChar(30) // nullable permanently
+
+  mileage       Int
+
+  // Service appointment
+  date          DateTime @db.Date
+  bookingTime   String   @map("booking_time") @db.VarChar(5) // snapshot, "09:30"
+  timeSlotId    String   @map("time_slot_id") @db.VarChar(30)
+
+  status        BookingStatus @default(PENDING)
+
+  customerNote  String? @map("customer_note") @db.Text // written by customer
+  adminNote     String? @map("admin_note") @db.Text    // internal, never sent
+
+  lineUserId    String? @map("line_user_id") @db.VarChar(100)
+  reminderSent  Boolean @default(false) @map("reminder_sent")
+
+  // Set automatically on status change
+  serviceStartedAt DateTime? @map("service_started_at")
+  completedAt      DateTime? @map("completed_at")
+
+  // null = created by the customer
+  createdByAdminId String? @map("created_by_admin_id") @db.VarChar(30)
+
+  createdAt     DateTime @default(now()) @map("created_at") // when the booking was made
+  updatedAt     DateTime @updatedAt @map("updated_at")      // optimistic-lock token
+
+  timeSlot        TimeSlot         @relation(fields: [timeSlotId], references: [id], onDelete: Restrict)
+  carModelRef     CarModel?        @relation(fields: [carModelId], references: [id], onDelete: SetNull)
+  createdByAdmin  Admin?           @relation(fields: [createdByAdminId], references: [id], onDelete: SetNull)
   bookingServices BookingService[]
 
-  @@index([date, timeBlockId])
+  @@index([date, bookingTime])
+  @@index([date, timeSlotId, status])
   @@index([status])
-  @@index([bookingCode])
+  @@index([createdAt])
   @@map("bookings")
+}
+
+enum BookingStatus {
+  PENDING     // รอยืนยัน
+  CONFIRMED   // ยืนยันการจอง
+  IN_SERVICE  // อยู่ระหว่างรับบริการ
+  COMPLETED   // เสร็จสิ้น
+  CANCELLED   // ยกเลิก
 }
 
 // ─── BookingService ───
@@ -107,20 +208,102 @@ model BookingService {
   @@map("booking_services")
 }
 
-enum BookingStatus {
-  PENDING
-  CONFIRMED
-  COMPLETED
-  CANCELLED
+// ─── BookingCounter ─── (one row per year)
+model BookingCounter {
+  year  Int @id
+  value Int @default(0)
+
+  @@map("booking_counters")
+}
+
+// ─── Setting ─── (admin-configurable key/value)
+model Setting {
+  key       String   @id @db.VarChar(50)
+  value     String   @db.VarChar(255)
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("settings")
 }
 
 // ─── NotificationTemplate ───
-// Editable LINE notification messages per status
 model NotificationTemplate {
   id       String  @id @default(cuid()) @db.VarChar(30)
-  trigger  String  @unique @db.VarChar(20) // CONFIRMED, COMPLETED, CANCELLED
-  template String  @db.Text // message with {placeholders}
+  // CONFIRMED | IN_SERVICE | COMPLETED | CANCELLED | RESCHEDULED | REMINDER
+  trigger  String  @unique @db.VarChar(20)
+  template String  @db.Text
   active   Boolean @default(true)
 
   @@map("notification_templates")
+}
+
+// ─── AuditLog ───
+model AuditLog {
+  id String @id @default(cuid()) @db.VarChar(30)
+
+  // Denormalized so the log stays readable after an admin is renamed or removed
+  actorId    String? @map("actor_id") @db.VarChar(30)
+  actorEmail String  @map("actor_email") @db.VarChar(100)
+  actorName  String  @map("actor_name") @db.VarChar(100)
+
+  action AuditAction
+
+  entityType  String? @map("entity_type") @db.VarChar(30)
+  entityId    String? @map("entity_id") @db.VarChar(30)
+  entityLabel String? @map("entity_label") @db.VarChar(100)
+
+  // { field: { from, to } } — changed fields only.
+  // Overrides recorded as { overrides: ["CAPACITY", "SERVICE_RESTRICTION"] }
+  changes Json?
+
+  ip        String?  @db.VarChar(45)
+  userAgent String?  @map("user_agent") @db.VarChar(255)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  actor Admin? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([actorId, createdAt])
+  @@index([entityType, entityId])
+  @@index([action, createdAt])
+  @@map("audit_logs")
+}
+
+enum AuditAction {
+  // Auth
+  LOGIN
+  LOGIN_FAILED
+  LOGOUT
+  PASSWORD_CHANGED
+
+  // Bookings
+  BOOKING_CREATED
+  BOOKING_STATUS_CHANGED
+  BOOKING_RESCHEDULED
+  BOOKING_UPDATED
+  BOOKING_DELETED
+
+  // Notifications
+  NOTIFICATION_SENT
+  NOTIFICATION_FAILED
+
+  // Admin management
+  ADMIN_CREATED
+  ADMIN_UPDATED
+  ADMIN_DEACTIVATED
+  ADMIN_REACTIVATED
+  ADMIN_ROLE_CHANGED
+  ADMIN_PASSWORD_RESET
+
+  // Configuration
+  SERVICE_UPDATED
+  SLOT_UPDATED
+  SLOT_CLOSURE_UPDATED
+  DAYCONFIG_UPDATED
+  CLOSED_DATE_UPDATED
+  CAR_MODEL_UPDATED
+  TEMPLATE_UPDATED
+  SETTINGS_UPDATED
+
+  // Data access
+  DATA_EXPORTED
 }
