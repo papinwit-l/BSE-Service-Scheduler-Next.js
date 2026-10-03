@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
@@ -14,6 +14,7 @@ import {
   X,
   ChevronRight,
   UserCircle,
+  ShieldCheck,
 } from "lucide-react";
 
 const NAV_ITEMS = [
@@ -39,15 +40,63 @@ const NAV_ITEMS = [
   },
 ];
 
+/** ROOT-only destinations. */
+const ROOT_NAV_ITEMS = [
+  {
+    href: "/admin/admins",
+    label: "ผู้ดูแลระบบ",
+    icon: ShieldCheck,
+  },
+];
+
 export default function AdminShell({
   userName,
+  isRoot = false,
   children,
 }: {
   userName: string;
+  isRoot?: boolean;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  const navItems = isRoot ? [...NAV_ITEMS, ...ROOT_NAV_ITEMS] : NAV_ITEMS;
+
+  /**
+   * A deactivated admin keeps a valid session cookie until it expires, so
+   * the proxy still lets pages load while every API returns 401. Rather
+   * than have each page defend itself, catch 401s from /api/admin here and
+   * sign the user out.
+   */
+  useEffect(() => {
+    const originalFetch = window.fetch;
+
+    window.fetch = async (...args: Parameters<typeof fetch>) => {
+      const res = await originalFetch(...args);
+
+      if (res.status === 401) {
+        const url =
+          typeof args[0] === "string"
+            ? args[0]
+            : args[0] instanceof Request
+              ? args[0].url
+              : String(args[0]);
+
+        // Only admin APIs: NextAuth's own endpoints answer 401 routinely.
+        if (url.includes("/api/admin/")) {
+          window.fetch = originalFetch;
+          await signOut({ callbackUrl: "/admin/login" });
+        }
+      }
+
+      return res;
+    };
+
+    return () => {
+      window.fetch = originalFetch;
+    };
+  }, []);
 
   function handleSignOut() {
     signOut({ callbackUrl: "/admin/login" });
@@ -98,7 +147,7 @@ export default function AdminShell({
         {/* Nav */}
         <nav className="flex-1 px-3 py-4">
           <div className="space-y-1">
-            {NAV_ITEMS.map((item) => {
+            {navItems.map((item) => {
               const isActive =
                 pathname === item.href ||
                 (item.href !== "/admin/dashboard" &&
