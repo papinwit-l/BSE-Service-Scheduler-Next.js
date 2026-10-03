@@ -17,7 +17,10 @@ export default async function AdminLayout({
 
   return (
     <>
-      <AdminShell userName={session.user?.name || "Admin"}>
+      <AdminShell
+        userName={session.user?.name || "Admin"}
+        isRoot={session.user?.role === "ROOT"}
+      >
         {children}
       </AdminShell>
 
