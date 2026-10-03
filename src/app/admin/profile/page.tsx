@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 
 export default function AdminProfilePage() {
-  const { data: session } = useSession();
+  const { data: session, update } = useSession();
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -59,6 +59,13 @@ export default function AdminProfilePage() {
       setNewPassword("");
       setConfirmPassword("");
       flash("✅ เปลี่ยนรหัสผ่านสำเร็จ");
+
+      // Refresh the session
+      await update({});
+
+      if (session?.user?.mustChangePassword) {
+        window.location.href = "/admin/dashboard";
+      }
     } catch {
       flash("❌ เกิดข้อผิดพลาด");
     } finally {

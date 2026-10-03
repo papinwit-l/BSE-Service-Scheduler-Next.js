@@ -60,8 +60,16 @@ export default function AdminDashboardPage() {
 
   useEffect(() => {
     fetch("/api/admin/dashboard")
-      .then((res) => res.json())
-      .then(setData)
+      .then(async (res) => {
+        if (res.status === 401) {
+          // Session outlived the account — sign out rather than show a broken page
+          window.location.href = "/admin/login";
+          return null;
+        }
+        if (!res.ok) throw new Error();
+        return res.json();
+      })
+      .then((d) => d && setData(d))
       .catch(() => setData(null))
       .finally(() => setLoading(false));
   }, []);
