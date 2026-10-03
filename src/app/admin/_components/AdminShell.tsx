@@ -15,6 +15,7 @@ import {
   ChevronRight,
   UserCircle,
   ShieldCheck,
+  ScrollText,
 } from "lucide-react";
 
 const NAV_ITEMS = [
@@ -46,6 +47,11 @@ const ROOT_NAV_ITEMS = [
     href: "/admin/admins",
     label: "ผู้ดูแลระบบ",
     icon: ShieldCheck,
+  },
+  {
+    href: "/admin/audit-logs",
+    label: "ประวัติการใช้งาน",
+    icon: ScrollText,
   },
 ];
 
