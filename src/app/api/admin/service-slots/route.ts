@@ -123,8 +123,14 @@ export async function PUT(request: NextRequest) {
         entityId: serviceId,
         entityLabel: service.name,
         changes: {
-          restrictSlots: { from: service.restrictSlots, to: restrict },
-          slots: { from: before.length, to: ids.length },
+          // Only record what actually moved — otherwise every save logs
+          // restrictSlots: true → true
+          ...(service.restrictSlots !== restrict
+            ? { restrictSlots: { from: service.restrictSlots, to: restrict } }
+            : {}),
+          ...(before.length !== ids.length
+            ? { slots: { from: before.length, to: ids.length } }
+            : {}),
         },
         tx,
       });
