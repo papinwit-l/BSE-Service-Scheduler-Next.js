@@ -101,40 +101,48 @@ export async function PUT(request: NextRequest) {
 
     const before = service.serviceTimeSlots.map((st) => st.timeSlotId);
 
-    await prisma.$transaction(async (tx) => {
-      await tx.service.update({
-        where: { id: serviceId },
-        data: { restrictSlots: restrict },
-      });
-
-      // Replace wholesale: simpler than diffing, and the table is tiny.
-      await tx.serviceTimeSlot.deleteMany({ where: { serviceId } });
-
-      if (ids.length > 0) {
-        await tx.serviceTimeSlot.createMany({
-          data: ids.map((timeSlotId) => ({ serviceId, timeSlotId })),
+    await prisma.$transaction(
+      async (tx) => {
+        await tx.service.update({
+          where: { id: serviceId },
+          data: { restrictSlots: restrict },
         });
-      }
 
-      await logAudit({
-        actor,
-        action: "SERVICE_UPDATED",
-        entityType: "Service",
-        entityId: serviceId,
-        entityLabel: service.name,
-        changes: {
-          // Only record what actually moved — otherwise every save logs
-          // restrictSlots: true → true
-          ...(service.restrictSlots !== restrict
-            ? { restrictSlots: { from: service.restrictSlots, to: restrict } }
-            : {}),
-          ...(before.length !== ids.length
-            ? { slots: { from: before.length, to: ids.length } }
-            : {}),
-        },
-        tx,
-      });
-    });
+        // Replace wholesale: simpler than diffing, and the table is tiny.
+        await tx.serviceTimeSlot.deleteMany({ where: { serviceId } });
+
+        if (ids.length > 0) {
+          await tx.serviceTimeSlot.createMany({
+            data: ids.map((timeSlotId) => ({ serviceId, timeSlotId })),
+          });
+        }
+
+        await logAudit({
+          actor,
+          action: "SERVICE_UPDATED",
+          entityType: "Service",
+          entityId: serviceId,
+          entityLabel: service.name,
+          changes: {
+            // Only record what actually moved — otherwise every save logs
+            // restrictSlots: true → true
+            ...(service.restrictSlots !== restrict
+              ? { restrictSlots: { from: service.restrictSlots, to: restrict } }
+              : {}),
+            ...(before.length !== ids.length
+              ? { slots: { from: before.length, to: ids.length } }
+              : {}),
+          },
+          tx,
+        });
+      },
+      {
+        // Each query crosses the internet to the database, so the round
+        // trips add up. Back to the 5s default once the database is local.
+        timeout: 20000,
+        maxWait: 10000,
+      },
+    );
 
     return NextResponse.json({ success: true });
   } catch (err) {
