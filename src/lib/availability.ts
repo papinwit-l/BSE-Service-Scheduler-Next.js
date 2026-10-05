@@ -56,10 +56,17 @@ type Options = {
  */
 async function restrictedSlotIds(
   serviceIds: string[],
+  /**
+   * The client to query through. MUST be the transaction client when called
+   * from inside a transaction: with connection_limit=1 the transaction holds
+   * the only connection, so a query on the global client waits for one that
+   * can never free, and the transaction dies at pool_timeout.
+   */
+  client: Prisma.TransactionClient = prisma,
 ): Promise<Set<string> | null> {
   if (serviceIds.length === 0) return null;
 
-  const services = await prisma.service.findMany({
+  const services = await client.service.findMany({
     where: { id: { in: serviceIds }, restrictSlots: true },
     select: { serviceTimeSlots: { select: { timeSlotId: true } } },
   });
@@ -246,7 +253,7 @@ export async function checkSlot(
 
   if (!slot.active || closure) warnings.push("SLOT_CLOSED");
 
-  const allowed = await restrictedSlotIds(opts.serviceIds);
+  const allowed = await restrictedSlotIds(opts.serviceIds, tx);
   if (allowed !== null && !allowed.has(slot.id)) {
     warnings.push("SERVICE_RESTRICTION");
   }
