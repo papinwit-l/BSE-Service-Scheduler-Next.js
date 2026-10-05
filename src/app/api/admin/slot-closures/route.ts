@@ -99,33 +99,41 @@ export async function POST(request: NextRequest) {
       orderBy: { bookingTime: "asc" },
     });
 
-    const created = await prisma.$transaction(async (tx) => {
-      // createMany + skipDuplicates: closing an already-closed slot is a
-      // no-op rather than an error.
-      const result = await tx.slotClosure.createMany({
-        data: timeSlotIds.map((timeSlotId: string) => ({
-          date: dateOnly,
-          timeSlotId,
-          reason: reason?.trim() || null,
-        })),
-        skipDuplicates: true,
-      });
+    const created = await prisma.$transaction(
+      async (tx) => {
+        // createMany + skipDuplicates: closing an already-closed slot is a
+        // no-op rather than an error.
+        const result = await tx.slotClosure.createMany({
+          data: timeSlotIds.map((timeSlotId: string) => ({
+            date: dateOnly,
+            timeSlotId,
+            reason: reason?.trim() || null,
+          })),
+          skipDuplicates: true,
+        });
 
-      await logAudit({
-        actor,
-        action: "SLOT_CLOSURE_UPDATED",
-        entityType: "SlotClosure",
-        entityLabel: date,
-        changes: {
-          closed: { from: null, to: timeSlotIds.length },
-          reason: { from: null, to: reason || null },
-          affectedBookings: { from: null, to: affected.length },
-        },
-        tx,
-      });
+        await logAudit({
+          actor,
+          action: "SLOT_CLOSURE_UPDATED",
+          entityType: "SlotClosure",
+          entityLabel: date,
+          changes: {
+            closed: { from: null, to: timeSlotIds.length },
+            reason: { from: null, to: reason || null },
+            affectedBookings: { from: null, to: affected.length },
+          },
+          tx,
+        });
 
-      return result.count;
-    });
+        return result.count;
+      },
+      {
+        // Each query crosses the internet to the database, so the round
+        // trips add up. Back to the 5s default once the database is local.
+        timeout: 20000,
+        maxWait: 10000,
+      },
+    );
 
     return NextResponse.json({ created, affected }, { status: 201 });
   } catch (err) {

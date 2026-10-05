@@ -192,137 +192,151 @@ export async function PATCH(
       }
     }
 
-    const result = await prisma.$transaction(async (tx) => {
-      let bookingTime = existing.bookingTime;
-      let overrides: SlotWarning[] = [];
+    const result = await prisma.$transaction(
+      async (tx) => {
+        let bookingTime = existing.bookingTime;
+        let overrides: SlotWarning[] = [];
 
-      // Only re-check the slot when the schedule or services moved, and
-      // never for a cancelled booking — it no longer occupies a seat.
-      if ((scheduleChanged || servicesChanged) && nextStatus !== "CANCELLED") {
-        const check = await checkSlot(tx, {
-          dateStr: nextDate,
-          timeSlotId: nextSlotId,
-          serviceIds: nextServiceIds,
-          excludeBookingId: id, // don't count this booking against itself
+        // Only re-check the slot when the schedule or services moved, and
+        // never for a cancelled booking — it no longer occupies a seat.
+        if (
+          (scheduleChanged || servicesChanged) &&
+          nextStatus !== "CANCELLED"
+        ) {
+          const check = await checkSlot(tx, {
+            dateStr: nextDate,
+            timeSlotId: nextSlotId,
+            serviceIds: nextServiceIds,
+            excludeBookingId: id, // don't count this booking against itself
+          });
+
+          if (!check.time || check.warnings.includes("SLOT_CLOSED")) {
+            throw new SlotClosed();
+          }
+
+          const blocking = check.warnings.filter((w) => w !== "LEAD_TIME");
+
+          if (blocking.length > 0 && !confirmOverride) {
+            throw new OverrideRequired(blocking);
+          }
+
+          overrides = blocking;
+          bookingTime = check.time;
+        }
+
+        const data: Prisma.BookingUpdateInput = {
+          status: nextStatus,
+          date: toDateOnly(nextDate),
+          bookingTime,
+          timeSlot: { connect: { id: nextSlotId } },
+          carModel,
+          carModelRef: resolvedModelId
+            ? { connect: { id: resolvedModelId } }
+            : { disconnect: true },
+        };
+
+        if (customerName !== undefined)
+          data.customerName = sanitize(customerName);
+        if (customerPhone !== undefined)
+          data.customerPhone = sanitize(customerPhone);
+        if (licensePlate !== undefined)
+          data.licensePlate = sanitize(licensePlate);
+        if (bodyNo !== undefined)
+          data.bodyNo = bodyNo ? sanitize(bodyNo) : null;
+        if (mileage !== undefined) data.mileage = Number(mileage) || 0;
+        if (adminNote !== undefined) {
+          data.adminNote = adminNote ? sanitize(adminNote) : null;
+        }
+
+        // Service timestamps follow the status automatically
+        if (nextStatus === "IN_SERVICE" && !existing.serviceStartedAt) {
+          data.serviceStartedAt = new Date();
+        }
+        if (nextStatus === "COMPLETED") {
+          data.completedAt = existing.completedAt ?? new Date();
+        } else if (existing.completedAt) {
+          data.completedAt = null; // reopened
+        }
+
+        if (servicesChanged) {
+          data.bookingServices = {
+            deleteMany: {},
+            create: nextServiceIds.map((serviceId) => ({ serviceId })),
+          };
+        }
+
+        const updated = await tx.booking.update({
+          where: { id },
+          data,
+          include: {
+            bookingServices: {
+              include: { service: { select: { name: true } } },
+            },
+          },
         });
 
-        if (!check.time || check.warnings.includes("SLOT_CLOSED")) {
-          throw new SlotClosed();
+        const changes = diff(
+          {
+            status: existing.status,
+            date: toDateStr(existing.date),
+            bookingTime: existing.bookingTime,
+            customerName: existing.customerName,
+            customerPhone: existing.customerPhone,
+            licensePlate: existing.licensePlate,
+            carModel: existing.carModel,
+            bodyNo: existing.bodyNo,
+            mileage: existing.mileage,
+            adminNote: existing.adminNote,
+          },
+          {
+            status: updated.status,
+            date: toDateStr(updated.date),
+            bookingTime: updated.bookingTime,
+            customerName: updated.customerName,
+            customerPhone: updated.customerPhone,
+            licensePlate: updated.licensePlate,
+            carModel: updated.carModel,
+            bodyNo: updated.bodyNo,
+            mileage: updated.mileage,
+            adminNote: updated.adminNote,
+          },
+        );
+
+        if (servicesChanged) {
+          changes.services = {
+            from: existing.bookingServices.length,
+            to: nextServiceIds.length,
+          };
+        }
+        if (overrides.length > 0) {
+          changes.overrides = { from: null, to: overrides };
         }
 
-        const blocking = check.warnings.filter((w) => w !== "LEAD_TIME");
+        const statusChanged = existing.status !== updated.status;
 
-        if (blocking.length > 0 && !confirmOverride) {
-          throw new OverrideRequired(blocking);
-        }
+        await logAudit({
+          actor,
+          action: statusChanged
+            ? "BOOKING_STATUS_CHANGED"
+            : scheduleChanged
+              ? "BOOKING_RESCHEDULED"
+              : "BOOKING_UPDATED",
+          entityType: "Booking",
+          entityId: id,
+          entityLabel: updated.bookingCode,
+          changes,
+          tx,
+        });
 
-        overrides = blocking;
-        bookingTime = check.time;
-      }
-
-      const data: Prisma.BookingUpdateInput = {
-        status: nextStatus,
-        date: toDateOnly(nextDate),
-        bookingTime,
-        timeSlot: { connect: { id: nextSlotId } },
-        carModel,
-        carModelRef: resolvedModelId
-          ? { connect: { id: resolvedModelId } }
-          : { disconnect: true },
-      };
-
-      if (customerName !== undefined)
-        data.customerName = sanitize(customerName);
-      if (customerPhone !== undefined)
-        data.customerPhone = sanitize(customerPhone);
-      if (licensePlate !== undefined)
-        data.licensePlate = sanitize(licensePlate);
-      if (bodyNo !== undefined) data.bodyNo = bodyNo ? sanitize(bodyNo) : null;
-      if (mileage !== undefined) data.mileage = Number(mileage) || 0;
-      if (adminNote !== undefined) {
-        data.adminNote = adminNote ? sanitize(adminNote) : null;
-      }
-
-      // Service timestamps follow the status automatically
-      if (nextStatus === "IN_SERVICE" && !existing.serviceStartedAt) {
-        data.serviceStartedAt = new Date();
-      }
-      if (nextStatus === "COMPLETED") {
-        data.completedAt = existing.completedAt ?? new Date();
-      } else if (existing.completedAt) {
-        data.completedAt = null; // reopened
-      }
-
-      if (servicesChanged) {
-        data.bookingServices = {
-          deleteMany: {},
-          create: nextServiceIds.map((serviceId) => ({ serviceId })),
-        };
-      }
-
-      const updated = await tx.booking.update({
-        where: { id },
-        data,
-        include: {
-          bookingServices: { include: { service: { select: { name: true } } } },
-        },
-      });
-
-      const changes = diff(
-        {
-          status: existing.status,
-          date: toDateStr(existing.date),
-          bookingTime: existing.bookingTime,
-          customerName: existing.customerName,
-          customerPhone: existing.customerPhone,
-          licensePlate: existing.licensePlate,
-          carModel: existing.carModel,
-          bodyNo: existing.bodyNo,
-          mileage: existing.mileage,
-          adminNote: existing.adminNote,
-        },
-        {
-          status: updated.status,
-          date: toDateStr(updated.date),
-          bookingTime: updated.bookingTime,
-          customerName: updated.customerName,
-          customerPhone: updated.customerPhone,
-          licensePlate: updated.licensePlate,
-          carModel: updated.carModel,
-          bodyNo: updated.bodyNo,
-          mileage: updated.mileage,
-          adminNote: updated.adminNote,
-        },
-      );
-
-      if (servicesChanged) {
-        changes.services = {
-          from: existing.bookingServices.length,
-          to: nextServiceIds.length,
-        };
-      }
-      if (overrides.length > 0) {
-        changes.overrides = { from: null, to: overrides };
-      }
-
-      const statusChanged = existing.status !== updated.status;
-
-      await logAudit({
-        actor,
-        action: statusChanged
-          ? "BOOKING_STATUS_CHANGED"
-          : scheduleChanged
-            ? "BOOKING_RESCHEDULED"
-            : "BOOKING_UPDATED",
-        entityType: "Booking",
-        entityId: id,
-        entityLabel: updated.bookingCode,
-        changes,
-        tx,
-      });
-
-      return { updated, statusChanged, scheduleChanged };
-    });
+        return { updated, statusChanged, scheduleChanged };
+      },
+      {
+        // Each query crosses the internet to the database, so the round
+        // trips add up. Back to the 5s default once the database is local.
+        timeout: 20000,
+        maxWait: 10000,
+      },
+    );
 
     // ─── One LINE message per save, after the transaction commits ───
     let lineNotified = false;

@@ -239,67 +239,75 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const booking = await prisma.$transaction(async (tx) => {
-      const check = await checkSlot(tx, {
-        dateStr: date,
-        timeSlotId,
-        serviceIds,
-      });
-
-      if (!check.time || check.warnings.includes("SLOT_CLOSED")) {
-        throw new SlotClosed();
-      }
-
-      // Admins may override capacity and service restrictions, but only
-      // after confirming. Lead time doesn't apply to admin-made bookings.
-      const blocking = check.warnings.filter((w) => w !== "LEAD_TIME");
-
-      if (blocking.length > 0 && !confirmOverride) {
-        throw new OverrideRequired(blocking);
-      }
-
-      const created = await tx.booking.create({
-        data: {
-          bookingCode: await generateBookingCode(tx),
-          accessToken: generateAccessToken(),
-          customerName: sanitize(customerName),
-          customerPhone: sanitize(customerPhone),
-          licensePlate: sanitize(licensePlate),
-          carModel,
-          carModelId: resolvedModelId,
-          bodyNo: bodyNo ? sanitize(bodyNo) : null,
-          mileage: Number(mileage) || 0,
-          date: toDateOnly(date),
-          bookingTime: check.time,
+    const booking = await prisma.$transaction(
+      async (tx) => {
+        const check = await checkSlot(tx, {
+          dateStr: date,
           timeSlotId,
-          status,
-          customerNote: customerNote ? sanitize(customerNote) : null,
-          adminNote: adminNote ? sanitize(adminNote) : null,
-          createdByAdminId: actor.id,
-          bookingServices: {
-            create: serviceIds.map((serviceId: string) => ({ serviceId })),
+          serviceIds,
+        });
+
+        if (!check.time || check.warnings.includes("SLOT_CLOSED")) {
+          throw new SlotClosed();
+        }
+
+        // Admins may override capacity and service restrictions, but only
+        // after confirming. Lead time doesn't apply to admin-made bookings.
+        const blocking = check.warnings.filter((w) => w !== "LEAD_TIME");
+
+        if (blocking.length > 0 && !confirmOverride) {
+          throw new OverrideRequired(blocking);
+        }
+
+        const created = await tx.booking.create({
+          data: {
+            bookingCode: await generateBookingCode(tx),
+            accessToken: generateAccessToken(),
+            customerName: sanitize(customerName),
+            customerPhone: sanitize(customerPhone),
+            licensePlate: sanitize(licensePlate),
+            carModel,
+            carModelId: resolvedModelId,
+            bodyNo: bodyNo ? sanitize(bodyNo) : null,
+            mileage: Number(mileage) || 0,
+            date: toDateOnly(date),
+            bookingTime: check.time,
+            timeSlotId,
+            status,
+            customerNote: customerNote ? sanitize(customerNote) : null,
+            adminNote: adminNote ? sanitize(adminNote) : null,
+            createdByAdminId: actor.id,
+            bookingServices: {
+              create: serviceIds.map((serviceId: string) => ({ serviceId })),
+            },
           },
-        },
-        select: { id: true, bookingCode: true },
-      });
+          select: { id: true, bookingCode: true },
+        });
 
-      await logAudit({
-        actor,
-        action: "BOOKING_CREATED",
-        entityType: "Booking",
-        entityId: created.id,
-        entityLabel: created.bookingCode,
-        changes: {
-          date,
-          time: check.time,
-          status,
-          ...(blocking.length > 0 ? { overrides: blocking } : {}),
-        },
-        tx,
-      });
+        await logAudit({
+          actor,
+          action: "BOOKING_CREATED",
+          entityType: "Booking",
+          entityId: created.id,
+          entityLabel: created.bookingCode,
+          changes: {
+            date,
+            time: check.time,
+            status,
+            ...(blocking.length > 0 ? { overrides: blocking } : {}),
+          },
+          tx,
+        });
 
-      return created;
-    });
+        return created;
+      },
+      {
+        // Each query crosses the internet to the database, so the round
+        // trips add up. Back to the 5s default once the database is local.
+        timeout: 20000,
+        maxWait: 10000,
+      },
+    );
 
     return NextResponse.json(
       { id: booking.id, bookingCode: booking.bookingCode },

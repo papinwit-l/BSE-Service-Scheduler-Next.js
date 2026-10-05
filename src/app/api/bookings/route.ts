@@ -130,51 +130,59 @@ export async function POST(request: NextRequest) {
     // ─── Create ───
     // The slot is re-checked under a row lock inside the transaction: the
     // seat may have gone between page load and submit.
-    const booking = await prisma.$transaction(async (tx) => {
-      const check = await checkSlot(tx, {
-        dateStr: data.date,
-        timeSlotId: data.timeSlotId,
-        serviceIds: data.serviceIds,
-      });
-
-      if (!check.ok || !check.time) {
-        throw new SlotUnavailable(
-          check.warnings.includes("CAPACITY")
-            ? "ช่วงเวลานี้เพิ่งเต็ม กรุณาเลือกเวลาอื่น"
-            : WARNING_MESSAGES[check.warnings[0]] ||
-                "ช่วงเวลาไม่พร้อมให้บริการ",
-        );
-      }
-
-      const bookingCode = await generateBookingCode(tx);
-
-      return tx.booking.create({
-        data: {
-          bookingCode,
-          accessToken: generateAccessToken(),
-          customerName,
-          customerPhone,
-          licensePlate,
-          carModel,
-          carModelId,
-          bodyNo,
-          mileage: data.mileage,
-          date: toDateOnly(data.date),
-          bookingTime: check.time, // snapshot
+    const booking = await prisma.$transaction(
+      async (tx) => {
+        const check = await checkSlot(tx, {
+          dateStr: data.date,
           timeSlotId: data.timeSlotId,
-          customerNote,
-          bookingServices: {
-            create: data.serviceIds.map((serviceId) => ({ serviceId })),
+          serviceIds: data.serviceIds,
+        });
+
+        if (!check.ok || !check.time) {
+          throw new SlotUnavailable(
+            check.warnings.includes("CAPACITY")
+              ? "ช่วงเวลานี้เพิ่งเต็ม กรุณาเลือกเวลาอื่น"
+              : WARNING_MESSAGES[check.warnings[0]] ||
+                  "ช่วงเวลาไม่พร้อมให้บริการ",
+          );
+        }
+
+        const bookingCode = await generateBookingCode(tx);
+
+        return tx.booking.create({
+          data: {
+            bookingCode,
+            accessToken: generateAccessToken(),
+            customerName,
+            customerPhone,
+            licensePlate,
+            carModel,
+            carModelId,
+            bodyNo,
+            mileage: data.mileage,
+            date: toDateOnly(data.date),
+            bookingTime: check.time, // snapshot
+            timeSlotId: data.timeSlotId,
+            customerNote,
+            bookingServices: {
+              create: data.serviceIds.map((serviceId) => ({ serviceId })),
+            },
           },
-        },
-        select: {
-          id: true,
-          bookingCode: true,
-          accessToken: true,
-          status: true,
-        },
-      });
-    });
+          select: {
+            id: true,
+            bookingCode: true,
+            accessToken: true,
+            status: true,
+          },
+        });
+      },
+      {
+        // Each query crosses the internet to the database, so the round
+        // trips add up. Back to the 5s default once the database is local.
+        timeout: 20000,
+        maxWait: 10000,
+      },
+    );
 
     return NextResponse.json(
       {
